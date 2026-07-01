@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>바둑 — 기원 온라인</title>
+  <style>
+:root {
+  --bg: #1f2430;
+  --panel: #2a3140;
+  --card: #323b4d;
+  --line: #3f4a5e;
+  --text: #e7ecf3;
+  --muted: #9aa6b8;
+  --accent: #5b9bff;
+  --danger: #e0586b;
+  --board: #e9b969;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+.app {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: 1px;
+}
+.topbar .rom {
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.topbar .sub {
+  margin: 2px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.layout {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.board-wrap {
+  flex: 1 1 auto;
+  max-width: 760px;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  background: var(--board);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+#board {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.panel {
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.card h3 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 상태 */
+.status .turn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1px solid #0006;
+}
+.dot.black { background: radial-gradient(circle at 35% 35%, #6a6a6a, #000); }
+.dot.white { background: radial-gradient(circle at 35% 35%, #fff, #b9b9b9); }
+.status .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.status .meta b { color: var(--text); }
+.result {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: #1c2230;
+  border-radius: 8px;
+  font-weight: 600;
+  color: #ffd479;
+}
+
+/* 버튼 */
+button {
+  font: inherit;
+  color: var(--text);
+  background: #3c485e;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+button:hover { background: #46546d; }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #06122b; font-weight: 700; }
+button.primary:hover { filter: brightness(1.05); }
+button.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+button.danger:hover { background: rgba(224, 88, 107, 0.12); }
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+/* 새 대국 폼 */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+.row span { color: var(--muted); }
+select {
+  font: inherit;
+  color: var(--text);
+  background: #1f2734;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  min-width: 150px;
+}
+.newgame .primary { width: 100%; margin-top: 2px; }
+
+/* 기보 */
+.kifu-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.kifu-buttons button { flex: 1 1 auto; font-size: 13px; padding: 8px 8px; }
+
+.review {
+  margin-top: 12px;
+  padding: 10px;
+  background: #1c2230;
+  border-radius: 8px;
+}
+.rev-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.rev-nav button { padding: 6px 10px; }
+.rev-nav span { min-width: 70px; text-align: center; font-size: 13px; color: var(--muted); }
+.review #btn-continue { width: 100%; }
+
+.saved-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.saved-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  background: #29313f;
+}
+.saved-list .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.saved-list .sub2 { color: var(--muted); font-size: 11px; }
+.saved-list button { padding: 5px 8px; font-size: 12px; }
+.saved-list .empty { color: var(--muted); border: none; background: none; padding: 4px 0; }
+
+.foot {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 모바일: 세로 스택 */
+@media (max-width: 820px) {
+  .layout { flex-direction: column; }
+  .board-wrap { max-width: 100%; }
+  .panel { flex-basis: auto; width: 100%; }
+}
+
+</style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1>바둑 <span class="rom">Baduk</span></h1>
+      <p class="sub">기원 온라인 · 1단계 — 로컬 &amp; AI 대전</p>
+    </header>
+
+    <main class="layout">
+      <section class="board-wrap">
+        <canvas id="board"></canvas>
+      </section>
+
+      <aside class="panel">
+        <!-- 상태 -->
+        <div class="card status">
+          <div class="turn">
+            <span id="turn-dot" class="dot black"></span>
+            <span id="turn-text">흑 차례</span>
+          </div>
+          <div class="meta">
+            <span>수순 <b id="move-no">0</b></span>
+            <span>흑 따냄 <b id="cap-black">0</b></span>
+            <span>백 따냄 <b id="cap-white">0</b></span>
+          </div>
+          <div id="result" class="result" hidden></div>
+        </div>
+
+        <!-- 진행 버튼 -->
+        <div class="card actions">
+          <button id="btn-pass">패스</button>
+          <button id="btn-undo">무르기</button>
+          <button id="btn-resign" class="danger">기권</button>
+        </div>
+
+        <!-- 새 대국 -->
+        <div class="card newgame">
+          <h2>새 대국</h2>
+          <label class="row">
+            <span>모드</span>
+            <select id="sel-mode">
+              <option value="local">2인 로컬</option>
+              <option value="ai">AI 대전</option>
+            </select>
+          </label>
+          <label class="row" id="level-row" hidden>
+            <span>AI 급수</span>
+            <select id="sel-level">
+              <option value="easy">초급 (18~13급)</option>
+              <option value="medium" selected>중급 (12~7급)</option>
+              <option value="hard">상급 (6~1급)</option>
+            </select>
+          </label>
+          <label class="row">
+            <span>치수</span>
+            <select id="sel-handicap">
+              <option value="0">호선 (0)</option>
+              <option value="2">2점</option>
+              <option value="3">3점</option>
+              <option value="4">4점</option>
+              <option value="5">5점</option>
+              <option value="6">6점</option>
+              <option value="7">7점</option>
+              <option value="8">8점</option>
+              <option value="9">9점</option>
+            </select>
+          </label>
+          <button id="btn-new" class="primary">새 대국 시작</button>
+        </div>
+
+        <!-- 기보 -->
+        <div class="card kifu">
+          <h2>기보</h2>
+          <div class="kifu-buttons">
+            <button id="btn-save">현재 기보 저장</button>
+            <button id="btn-sgf">SGF 내보내기</button>
+            <button id="btn-json">JSON 내보내기</button>
+          </div>
+
+          <div id="review-controls" class="review" hidden>
+            <div class="rev-nav">
+              <button data-rev="first" title="처음">⏮</button>
+              <button data-rev="prev" title="이전">◀</button>
+              <span id="rev-label">0 / 0</span>
+              <button data-rev="next" title="다음">▶</button>
+              <button data-rev="last" title="끝">⏭</button>
+            </div>
+            <button id="btn-continue">이 위치부터 두기</button>
+          </div>
+
+          <h3>저장된 기보</h3>
+          <ul id="saved-list" class="saved-list"></ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="foot">
+      <span>2단계(온라인·관전) / 3단계(계정·급수·서버 기보)는 로드맵입니다.</span>
+    </footer>
+  </div>
+
+  <script>
+/* ===== js/rules.js ===== */
+// rules.js — 바둑 규칙 엔진 (순수 로직, UI/렌더링과 분리)
+// 보드 값: 0 = 빈 점, 1 = 흑, 2 = 백
+
+const EMPTY = 0;
+const BLACK = 1;
+const WHITE = 2;
+
+function opponent(color) {
+  return color === BLACK ? WHITE : BLACK;
+}
+
+// 19x19 표준 치석(접바둑) 위치. (x, y) 좌표는 y가 위에서 아래로 0..18.
+// 화점은 3, 9, 15 라인.
+const HANDICAP_19 = {
+  2: [[15, 3], [3, 15]],
+  3: [[15, 3], [3, 15], [15, 15]],
+  4: [[3, 3], [15, 3], [3, 15], [15, 15]],
+  5: [[3, 3], [15, 3], [3, 15], [15, 15], [9, 9]],
+  6: [[3, 3], [15, 3], [3, 15], [15, 15], [3, 9], [15, 9]],
+  7: [[3, 3], [15, 3], [3, 15], [15, 15], [3, 9], [15, 9], [9, 9]],
+  8: [[3, 3], [15, 3], [3, 15], [15, 15], [3, 9], [15, 9], [9, 3], [9, 15]],
+  9: [[3, 3], [15, 3], [3, 15], [15, 15], [3, 9], [15, 9], [9, 3], [9, 15], [9, 9]],
+};
+
+class GoGame {
+  constructor(size = 19) {
+    this.size = size;
+    this.reset();
+  }
+
+  reset() {
+    const n = this.size;
+    this.board = Array.from({ length: n }, () => new Array(n).fill(EMPTY));
+    this.turn = BLACK;
+    // captures[c] = c색이 따낸(잡은) 상대 돌 수
+    this.captures = { [BLACK]: 0, [WHITE]: 0 };
+    this.koPoint = null;       // 패: 이 자리에는 다음 수로 둘 수 없음 {x,y}
+    this.lastMove = null;      // {x,y,color}
+    this.passes = 0;           // 연속 패스 횟수
+    this.ended = false;
+    this.result = null;
+    this.moveNumber = 0;
+    this.moves = [];           // 기보(수순): {color,x,y} 또는 {color,pass:true}
+    this.history = [];         // 무르기용 델타 스택
+    this.handicap = 0;
+  }
+
+  // 빈 보드 상태에서 호출. h는 2..9.
+  setupHandicap(h) {
+    const pts = HANDICAP_19[h];
+    if (!pts) return;
+    for (const [x, y] of pts) this.board[y][x] = BLACK;
+    this.handicap = h;
+    this.turn = WHITE; // 접바둑은 백이 먼저 둔다
+  }
+
+  inBounds(x, y) {
+    return x >= 0 && y >= 0 && x < this.size && y < this.size;
+  }
+
+  neighbors(x, y) {
+    const out = [];
+    if (x > 0) out.push([x - 1, y]);
+    if (x < this.size - 1) out.push([x + 1, y]);
+    if (y > 0) out.push([x, y - 1]);
+    if (y < this.size - 1) out.push([x, y + 1]);
+    return out;
+  }
+
+  // 연결된 돌 그룹과 활로 수를 flood-fill로 계산.
+  // 반환: { stones: [[x,y]...], liberties: number }
+  groupInfo(x, y) {
+    const color = this.board[y][x];
+    const stones = [];
+    const libSet = new Set();
+    const seen = new Set();
+    const stack = [[x, y]];
+    seen.add(y * this.size + x);
+    while (stack.length) {
+      const [cx, cy] = stack.pop();
+      stones.push([cx, cy]);
+      for (const [nx, ny] of this.neighbors(cx, cy)) {
+        const v = this.board[ny][nx];
+        if (v === EMPTY) {
+          libSet.add(ny * this.size + nx);
+        } else if (v === color) {
+          const k = ny * this.size + nx;
+          if (!seen.has(k)) { seen.add(k); stack.push([nx, ny]); }
+        }
+      }
+    }
+    return { stones, liberties: libSet.size };
+  }
+
+  // 착수 합법성 + 따냄 결과를 "상태를 바꾸지 않고" 검사.
+  // 반환: { legal, reason, captured: [[x,y]...] }
+  probe(x, y, color) {
+    if (this.ended) return { legal: false, reason: 'ended', captured: [] };
+    if (!this.inBounds(x, y)) return { legal: false, reason: 'bounds', captured: [] };
+    if (this.board[y][x] !== EMPTY) return { legal: false, reason: 'occupied', captured: [] };
+    if (this.koPoint && this.koPoint.x === x && this.koPoint.y === y)
+      return { legal: false, reason: 'ko', captured: [] };
+
+    const opp = opponent(color);
+    this.board[y][x] = color; // 임시 착수
+
+    const capturedKeys = new Set();
+    for (const [nx, ny] of this.neighbors(x, y)) {
+      if (this.board[ny][nx] === opp) {
+        const info = this.groupInfo(nx, ny);
+        if (info.liberties === 0) {
+          for (const [sx, sy] of info.stones) capturedKeys.add(sy * this.size + sx);
+        }
+      }
+    }
+
+    let legal = true, reason = null;
+    if (capturedKeys.size === 0) {
+      // 따낸 돌이 없으면 내 그룹 활로 확인 → 0이면 자살수(금지)
+      const mine = this.groupInfo(x, y);
+      if (mine.liberties === 0) { legal = false; reason = 'suicide'; }
+    }
+
+    this.board[y][x] = EMPTY; // 원복
+
+    const captured = [];
+    for (const k of capturedKeys) captured.push([k % this.size, Math.floor(k / this.size)]);
+    return { legal, reason, captured };
+  }
+
+  // 현재 차례 색으로 (x,y)에 착수. 성공 시 상태 갱신.
+  play(x, y) {
+    const color = this.turn;
+    const res = this.probe(x, y, color);
+    if (!res.legal) return { ok: false, reason: res.reason };
+
+    const opp = opponent(color);
+    this.board[y][x] = color;
+    for (const [cx, cy] of res.captured) this.board[cy][cx] = EMPTY;
+
+    const capCount = res.captured.length;
+    this.captures[color] += capCount;
+
+    // 패(ko) 판정: 단 한 점만 따냈고, 방금 둔 돌이 단독 1점이며 활로가 1이면
+    // 따낸 자리는 다음 수로 즉시 되따낼 수 없다.
+    let newKo = null;
+    if (capCount === 1) {
+      const mine = this.groupInfo(x, y);
+      if (mine.stones.length === 1 && mine.liberties === 1) {
+        newKo = { x: res.captured[0][0], y: res.captured[0][1] };
+      }
+    }
+
+    this.history.push({
+      type: 'move', x, y, color,
+      captured: res.captured.map(([cx, cy]) => [cx, cy]),
+      capColor: opp,
+      prevKo: this.koPoint,
+      prevPasses: this.passes,
+      prevLastMove: this.lastMove,
+    });
+    this.moves.push({ color, x, y });
+
+    this.koPoint = newKo;
+    this.lastMove = { x, y, color };
+    this.passes = 0;
+    this.moveNumber++;
+    this.turn = opp;
+    return { ok: true, captured: capCount };
+  }
+
+  pass() {
+    if (this.ended) return { ok: false, reason: 'ended' };
+    const color = this.turn;
+    this.history.push({
+      type: 'pass', color,
+      prevKo: this.koPoint, prevPasses: this.passes, prevLastMove: this.lastMove,
+    });
+    this.moves.push({ color, pass: true });
+
+    this.passes++;
+    this.koPoint = null;
+    this.lastMove = null;
+    this.turn = opponent(color);
+    this.moveNumber++;
+    if (this.passes >= 2) { this.ended = true; this.result = { type: 'passed' }; }
+    return { ok: true, ended: this.ended };
+  }
+
+  resign(color = this.turn) {
+    if (this.ended) return { ok: false };
+    this.ended = true;
+    this.result = { type: 'resign', loser: color, winner: opponent(color) };
+    return { ok: true };
+  }
+
+  undo() {
+    const last = this.history.pop();
+    if (!last) return { ok: false };
+    if (this.ended) { this.ended = false; this.result = null; }
+    if (last.type === 'move') {
+      this.board[last.y][last.x] = EMPTY;
+      for (const [cx, cy] of last.captured) this.board[cy][cx] = last.capColor;
+      this.captures[last.color] -= last.captured.length;
+      this.turn = last.color;
+      this.moveNumber--;
+    } else {
+      this.turn = last.color;
+      this.moveNumber--;
+    }
+    this.koPoint = last.prevKo;
+    this.passes = last.prevPasses;
+    this.lastMove = last.prevLastMove;
+    this.moves.pop();
+    return { ok: true };
+  }
+
+  // 시뮬레이션/AI 용: 어떤 색이 둘 수 있는 모든 합법수 목록.
+  legalMoves(color) {
+    const out = [];
+    for (let y = 0; y < this.size; y++)
+      for (let x = 0; x < this.size; x++)
+        if (this.board[y][x] === EMPTY) {
+          const r = this.probe(x, y, color);
+          if (r.legal) out.push({ x, y, captured: r.captured.length });
+        }
+    return out;
+  }
+
+  // (x,y)에 color로 두면 그 그룹이 갖게 될 활로 수(따냄 반영). 상태 원복.
+  libertiesAfter(x, y, color) {
+    const opp = opponent(color);
+    this.board[y][x] = color;
+    const removed = [];
+    for (const [nx, ny] of this.neighbors(x, y)) {
+      if (this.board[ny][nx] === opp) {
+        const gi = this.groupInfo(nx, ny);
+        if (gi.liberties === 0) {
+          for (const [sx, sy] of gi.stones) { removed.push([sx, sy]); this.board[sy][sx] = EMPTY; }
+        }
+      }
+    }
+    const lib = this.groupInfo(x, y).liberties;
+    this.board[y][x] = EMPTY;
+    for (const [sx, sy] of removed) this.board[sy][sx] = opp;
+    return lib;
+  }
+
+  clone() {
+    const g = new GoGame(this.size);
+    g.board = this.board.map(row => row.slice());
+    g.turn = this.turn;
+    g.captures = { [BLACK]: this.captures[BLACK], [WHITE]: this.captures[WHITE] };
+    g.koPoint = this.koPoint ? { x: this.koPoint.x, y: this.koPoint.y } : null;
+    g.lastMove = this.lastMove;
+    g.passes = this.passes;
+    g.ended = this.ended;
+    g.moveNumber = this.moveNumber;
+    g.handicap = this.handicap;
+    return g;
+  }
+}
+
+
+/* ===== js/board.js ===== */
+// board.js — Canvas 바둑판 렌더링 및 좌표 변환
+
+const STAR_19 = [3, 9, 15];
+// 좌표 라벨: I(아이)는 건너뜀 (바둑 관례)
+const LETTERS = 'ABCDEFGHJKLMNOPQRST';
+
+class BoardView {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.size = 19;
+    this.margin = 0;
+    this.cell = 0;
+    this.cssSize = 0;
+    this.dpr = window.devicePixelRatio || 1;
+  }
+
+  // 컨테이너 크기에 맞춰 캔버스(정사각) 배치 + 셀 크기 계산
+  layout(size = this.size) {
+    this.size = size;
+    const rect = this.canvas.getBoundingClientRect();
+    const cssSize = Math.max(200, Math.floor(Math.min(rect.width, rect.height)));
+    this.dpr = window.devicePixelRatio || 1;
+    this.canvas.width = Math.round(cssSize * this.dpr);
+    this.canvas.height = Math.round(cssSize * this.dpr);
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.cssSize = cssSize;
+    this.margin = Math.round(cssSize * 0.04) + 12; // 좌표 라벨 여백
+    this.cell = (cssSize - this.margin * 2) / (size - 1);
+  }
+
+  gridToPixel(x, y) {
+    return { px: this.margin + x * this.cell, py: this.margin + y * this.cell };
+  }
+
+  // 화면 좌표 → 격자 교차점. 너무 먼 클릭은 null.
+  pixelToGrid(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect();
+    const mx = clientX - rect.left;
+    const my = clientY - rect.top;
+    const x = Math.round((mx - this.margin) / this.cell);
+    const y = Math.round((my - this.margin) / this.cell);
+    if (x < 0 || y < 0 || x >= this.size || y >= this.size) return null;
+    const gp = this.gridToPixel(x, y);
+    if (Math.hypot(mx - gp.px, my - gp.py) > this.cell * 0.5) return null;
+    return { x, y };
+  }
+
+  draw(game, hover, showMoveNumbers = false) {
+    const ctx = this.ctx;
+    const s = this.cssSize;
+    ctx.clearRect(0, 0, s, s);
+
+    // 판 배경
+    ctx.fillStyle = '#e9b969';
+    ctx.fillRect(0, 0, s, s);
+
+    // 격자선
+    ctx.strokeStyle = '#3a2a18';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < this.size; i++) {
+      const a = this.gridToPixel(i, 0), b = this.gridToPixel(i, this.size - 1);
+      ctx.moveTo(Math.round(a.px) + 0.5, a.py); ctx.lineTo(Math.round(b.px) + 0.5, b.py);
+      const c = this.gridToPixel(0, i), d = this.gridToPixel(this.size - 1, i);
+      ctx.moveTo(c.px, Math.round(c.py) + 0.5); ctx.lineTo(d.px, Math.round(d.py) + 0.5);
+    }
+    ctx.stroke();
+
+    // 화점
+    if (this.size === 19) {
+      ctx.fillStyle = '#3a2a18';
+      for (const sy of STAR_19) for (const sx of STAR_19) {
+        const p = this.gridToPixel(sx, sy);
+        ctx.beginPath();
+        ctx.arc(p.px, p.py, Math.max(2, this.cell * 0.09), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    this.drawLabels(ctx);
+
+    // 돌
+    for (let y = 0; y < this.size; y++)
+      for (let x = 0; x < this.size; x++)
+        if (game.board[y][x] !== EMPTY) this.drawStone(x, y, game.board[y][x], 1);
+
+    // 복기 중에는 현재 판에 살아 있는 돌에 수순 번호를 표시한다.
+    if (showMoveNumbers) this.drawMoveNumbers(game);
+
+    // 호버 미리보기(빈 점일 때만)
+    if (hover && game.board[hover.y][hover.x] === EMPTY && !game.ended) {
+      this.drawStone(hover.x, hover.y, game.turn, 0.4);
+    }
+
+    // 마지막 착수 표시
+    if (game.lastMove) {
+      const p = this.gridToPixel(game.lastMove.x, game.lastMove.y);
+      ctx.strokeStyle = game.lastMove.color === BLACK ? '#fff' : '#000';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.px, p.py, this.cell * 0.18, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  drawStone(x, y, color, alpha) {
+    const ctx = this.ctx;
+    const p = this.gridToPixel(x, y);
+    const r = this.cell * 0.46;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const grad = ctx.createRadialGradient(p.px - r * 0.3, p.py - r * 0.3, r * 0.1, p.px, p.py, r);
+    if (color === BLACK) { grad.addColorStop(0, '#5a5a5a'); grad.addColorStop(1, '#000'); }
+    else { grad.addColorStop(0, '#ffffff'); grad.addColorStop(1, '#b9b9b9'); }
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(p.px, p.py, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  drawMoveNumbers(game) {
+    const latestAt = new Map();
+    game.moves.forEach((move, index) => {
+      if (!move.pass) latestAt.set(`${move.x},${move.y}`, { ...move, number: index + 1 });
+    });
+
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = `700 ${Math.max(8, Math.floor(this.cell * 0.34))}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (const move of latestAt.values()) {
+      const color = game.board[move.y][move.x];
+      // 이미 잡힌 돌은 번호를 표시하지 않는다.
+      if (color === EMPTY || color !== move.color) continue;
+      const p = this.gridToPixel(move.x, move.y);
+      ctx.fillStyle = color === BLACK ? '#fff' : '#111';
+      ctx.fillText(String(move.number), p.px, p.py);
+    }
+    ctx.restore();
+  }
+
+  drawLabels(ctx) {
+    ctx.fillStyle = '#5a4424';
+    ctx.font = `${Math.max(9, Math.floor(this.cell * 0.42))}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < this.size; i++) {
+      const top = this.gridToPixel(i, 0);
+      ctx.fillText(LETTERS[i], top.px, this.margin * 0.5);
+      const left = this.gridToPixel(0, i);
+      ctx.fillText(String(this.size - i), this.margin * 0.5, left.py);
+    }
+  }
+}
+
+
+/* ===== js/ai.js ===== */
+// ai.js — 급수(난이도)별 AI 대전 휴리스틱 봇
+// 1단계 AI는 강한 엔진이 아니라 가벼운 규칙 기반 봇이다.
+//   easy   : 초급 (대략 18~13급) — 합법수 무작위 + 따냄 우선
+//   medium : 중급 (대략 12~7급)  — 탐욕적 점수화(따냄/단수/자충회피/접촉)
+//   hard   : 상급 (대략 6~1급)   — 중급 + 세력/근접 가중치
+
+function chooseMove(game, color, level) {
+  const moves = game.legalMoves(color);
+  if (moves.length === 0) return { pass: true };
+
+  // 자기 집(eye)을 메우는 수는 제외 (스스로 죽지 않게)
+  const nonEye = moves.filter(m => !isOwnEye(game, m.x, m.y, color));
+  const pool = nonEye.length ? nonEye : moves;
+
+  // 합법수가 남아 있어도 대국이 끝난 상태라면 패스한다.
+  // 사람의 패스에는 후반이면서 급한 수가 없을 때 맞패스하고,
+  // 판이 많이 찬 뒤에도 의미 없는 끝내기만 남으면 먼저 패스한다.
+  if (shouldPass(game, pool, color)) return { pass: true };
+
+  if (level === 'easy') {
+    const caps = pool.filter(m => m.captured > 0);
+    if (caps.length && Math.random() < 0.7) return pick(caps);
+    return pick(pool);
+  }
+
+  let best = [], bestScore = -Infinity;
+  for (const m of pool) {
+    const s = scoreMove(game, m, color, level);
+    if (s > bestScore) { bestScore = s; best = [m]; }
+    else if (s === bestScore) best.push(m);
+  }
+  return pick(best);
+}
+
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function shouldPass(game, moves, color) {
+  const total = game.size * game.size;
+  let occupied = 0;
+  for (const row of game.board)
+    for (const point of row)
+      if (point !== EMPTY) occupied++;
+
+  const progress = occupied / total;
+  const urgent = moves.some(m => isUrgentMove(game, m, color));
+
+  // 최소 90개 정도의 돌이 놓인 후, 사람이 패스했고 급한 수가 없으면 종료에 동의.
+  const enoughPlayed = occupied >= Math.max(60, Math.floor(total * 0.25));
+  if (game.passes === 1 && enoughPlayed && !urgent) return true;
+
+  // 사람이 패스하지 않아도 판의 62% 이상이 찼고 급한 수가 없으면 먼저 패스.
+  return progress >= 0.62 && !urgent;
+}
+
+function isUrgentMove(game, move, color) {
+  if (move.captured > 0) return true;
+
+  // 단수에 몰린 내 돌을 살리는 수는 패스하지 않고 둔다.
+  for (const [nx, ny] of game.neighbors(move.x, move.y)) {
+    if (game.board[ny][nx] === color && game.groupInfo(nx, ny).liberties === 1)
+      return true;
+  }
+  return false;
+}
+
+function scoreMove(game, m, color, level) {
+  let s = 0;
+  const opp = opponent(color);
+
+  // 따냄은 매우 좋다
+  s += m.captured * 12;
+
+  // 착수 후 내 그룹 활로 (자충 회피)
+  const myLib = game.libertiesAfter(m.x, m.y, color);
+  if (myLib === 1 && m.captured === 0) s -= 8; // 자충(self-atari)
+  s += Math.min(myLib, 4) * 0.5;
+
+  // 주변 분석
+  for (const [nx, ny] of game.neighbors(m.x, m.y)) {
+    const v = game.board[ny][nx];
+    if (v === opp) {
+      const gi = game.groupInfo(nx, ny);
+      if (gi.liberties === 1) s += 6;       // 상대를 단수/따냄 직전
+      else if (gi.liberties === 2) s += 1.5; // 공격
+    } else if (v === color) {
+      const gi = game.groupInfo(nx, ny);
+      if (gi.liberties === 1) s += 5;        // 단수당한 내 그룹 잇기/살리기
+    }
+  }
+
+  // 상대 마지막 수 근처(접촉/응수)
+  if (game.lastMove) {
+    const d = Math.abs(game.lastMove.x - m.x) + Math.abs(game.lastMove.y - m.y);
+    if (d <= 2) s += (3 - d);
+  }
+
+  // 세력: 초반엔 3~5선 선호 (상급)
+  if (level === 'hard') {
+    const edge = Math.min(m.x, m.y, game.size - 1 - m.x, game.size - 1 - m.y);
+    if (edge >= 2 && edge <= 4) s += 1.2;
+    if (edge === 0) s -= 1.5;
+  }
+
+  s += Math.random() * (level === 'hard' ? 0.5 : 1.5);
+  return s;
+}
+
+// (x,y)가 color의 "진짜 집(eye)"인지: 직교 이웃이 모두 내 색(또는 판 끝),
+// 대각도 충분히 내 색이면 집으로 보고 메우지 않는다.
+function isOwnEye(game, x, y, color) {
+  for (const [nx, ny] of game.neighbors(x, y)) {
+    if (game.board[ny][nx] !== color) return false;
+  }
+  const diag = [[x - 1, y - 1], [x + 1, y - 1], [x - 1, y + 1], [x + 1, y + 1]];
+  let ownDiag = 0, total = 0, edge = false;
+  for (const [dx, dy] of diag) {
+    if (!game.inBounds(dx, dy)) { edge = true; continue; }
+    total++;
+    if (game.board[dy][dx] === color) ownDiag++;
+  }
+  // 변/귀에서는 존재하는 대각이 모두 내 색이어야, 중앙에서는 3개 이상이면 집
+  if (edge) return ownDiag === total;
+  return ownDiag >= 3;
+}
+
+
+/* ===== js/record.js ===== */
+// record.js — 기보(수순) 기록: SGF/JSON 내보내기, localStorage 저장/불러오기
+
+const STORE_KEY = 'baduk_kifu_v1';
+
+function esc(s) { return String(s).replace(/[\]\\]/g, '\\$&'); }
+
+// 수순 배열 → SGF 문자열. 좌표는 a..s (0..18), y는 위에서 아래로.
+function movesToSGF(moves, size, meta = {}) {
+  const col = c => (c === BLACK ? 'B' : 'W');
+  const coord = (x, y) => String.fromCharCode(97 + x) + String.fromCharCode(97 + y);
+  let sgf = `(;GM[1]FF[4]CA[UTF-8]SZ[${size}]`;
+  if (meta.handicap) sgf += `HA[${meta.handicap}]`;
+  if (meta.pb) sgf += `PB[${esc(meta.pb)}]`;
+  if (meta.pw) sgf += `PW[${esc(meta.pw)}]`;
+  if (meta.date) sgf += `DT[${esc(meta.date)}]`;
+  if (meta.result) sgf += `RE[${esc(meta.result)}]`;
+  for (const m of moves) {
+    if (m.pass) sgf += `;${col(m.color)}[]`;
+    else sgf += `;${col(m.color)}[${coord(m.x, m.y)}]`;
+  }
+  sgf += ')';
+  return sgf;
+}
+
+function gameToJSON(game, meta = {}) {
+  return JSON.stringify({
+    size: game.size,
+    handicap: game.handicap,
+    moves: game.moves,
+    meta,
+  }, null, 2);
+}
+
+function listSaved() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function saveKifu(name, game, meta = {}) {
+  const list = listSaved();
+  const entry = {
+    name: name || ('대국 ' + (list.length + 1)),
+    size: game.size,
+    handicap: game.handicap,
+    moves: game.moves.slice(),
+    meta,
+  };
+  list.unshift(entry);
+  localStorage.setItem(STORE_KEY, JSON.stringify(list.slice(0, 50)));
+  return entry;
+}
+
+function deleteKifu(index) {
+  const list = listSaved();
+  if (index < 0 || index >= list.length) return;
+  list.splice(index, 1);
+  localStorage.setItem(STORE_KEY, JSON.stringify(list));
+}
+
+// 브라우저에서 파일 다운로드
+function download(filename, text, mime = 'text/plain') {
+  const blob = new Blob([text], { type: mime + ';charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+
+/* ===== js/game.js ===== */
+// game.js — 게임 컨트롤러: 모드(2인 로컬/AI), AI 스케줄링, 기보 복기(review)
+// DOM은 다루지 않는다. 상태 변화는 onChange 콜백으로 알린다.
+
+class GameController {
+  constructor() {
+    this.game = new GoGame(19);
+    this.mode = 'local';        // 'local' | 'ai'
+    this.aiLevel = 'medium';
+    this.humanColor = BLACK;
+    this.aiColor = WHITE;
+    this.thinking = false;
+    this.onChange = () => {};
+
+    // 복기(review) 상태
+    this.reviewMode = false;
+    this.reviewMoves = [];
+    this.reviewHandicap = 0;
+    this.reviewSize = 19;
+    this.reviewIndex = 0;
+  }
+
+  newGame(opts = {}) {
+    this.mode = opts.mode || 'local';
+    this.aiLevel = opts.aiLevel || 'medium';
+    this.reviewMode = false;
+    this.thinking = false;
+
+    this.game = new GoGame(19);
+    const h = opts.handicap || 0;
+    if (h >= 2) this.game.setupHandicap(h);
+
+    if (this.mode === 'ai') {
+      this.humanColor = BLACK;          // 1단계: 사람은 항상 흑
+      this.aiColor = WHITE;
+    }
+    this.emit();
+    this.maybeAI(); // 접바둑 등으로 AI(백)가 먼저 둘 수 있음
+  }
+
+  humanPlay(x, y) {
+    if (this.reviewMode || this.thinking || this.game.ended) return;
+    if (this.mode === 'ai' && this.game.turn !== this.humanColor) return;
+    const r = this.game.play(x, y);
+    if (!r.ok) return r;
+    this.emit();
+    this.maybeAI();
+    return r;
+  }
+
+  pass() {
+    if (this.reviewMode || this.thinking || this.game.ended) return;
+    if (this.mode === 'ai' && this.game.turn !== this.humanColor) return;
+    this.game.pass();
+    this.emit();
+    this.maybeAI();
+  }
+
+  resign() {
+    if (this.reviewMode || this.game.ended) return;
+    // AI 대전이면 사람(흑)이 기권. 로컬이면 현재 차례가 기권.
+    const loser = this.mode === 'ai' ? this.humanColor : this.game.turn;
+    this.game.resign(loser);
+    this.emit();
+  }
+
+  undo() {
+    if (this.reviewMode || this.thinking) return;
+    this.game.undo();
+    // AI 대전: AI 수 + 사람 수를 함께 되돌려 사람 차례로 복귀
+    if (this.mode === 'ai' && this.game.turn === this.aiColor && this.game.history.length) {
+      this.game.undo();
+    }
+    this.emit();
+  }
+
+  maybeAI() {
+    if (this.mode !== 'ai' || this.game.ended) return;
+    if (this.game.turn !== this.aiColor) return;
+    this.thinking = true;
+    this.emit();
+    // 약간의 지연으로 "생각하는" 느낌 + UI 갱신 보장
+    setTimeout(() => {
+      const mv = chooseMove(this.game, this.aiColor, this.aiLevel);
+      if (mv.pass) this.game.pass();
+      else this.game.play(mv.x, mv.y);
+      this.thinking = false;
+      this.emit();
+    }, 350);
+  }
+
+  // ----- 기보 복기 -----
+  loadKifu(kifu) {
+    this.reviewMode = true;
+    this.mode = 'local';
+    this.thinking = false;
+    this.reviewMoves = (kifu.moves || []).slice();
+    this.reviewHandicap = kifu.handicap || 0;
+    this.reviewSize = kifu.size || 19;
+    this.reviewIndex = this.reviewMoves.length;
+    this.rebuildReview();
+  }
+
+  rebuildReview() {
+    const g = new GoGame(this.reviewSize);
+    if (this.reviewHandicap >= 2) g.setupHandicap(this.reviewHandicap);
+    for (let i = 0; i < this.reviewIndex; i++) {
+      const m = this.reviewMoves[i];
+      if (m.pass) g.pass();
+      else g.play(m.x, m.y);
+    }
+    this.game = g;
+    this.emit();
+  }
+
+  reviewStep(target) {
+    if (!this.reviewMode) return;
+    const n = this.reviewMoves.length;
+    if (target === 'first') this.reviewIndex = 0;
+    else if (target === 'last') this.reviewIndex = n;
+    else if (target === 'prev') this.reviewIndex = Math.max(0, this.reviewIndex - 1);
+    else if (target === 'next') this.reviewIndex = Math.min(n, this.reviewIndex + 1);
+    this.rebuildReview();
+  }
+
+  // 현재 복기 위치부터 이어서 대국 (이후 수는 버림)
+  continueFromReview() {
+    if (!this.reviewMode) return;
+    this.reviewMode = false;
+    this.mode = 'local';
+    this.emit();
+  }
+
+  emit() { this.onChange(this.state()); }
+
+  state() {
+    const g = this.game;
+    return {
+      board: g.board,
+      size: g.size,
+      turn: g.turn,
+      captures: g.captures,
+      lastMove: g.lastMove,
+      moveNumber: g.moveNumber,
+      ended: g.ended,
+      result: g.result,
+      passes: g.passes,
+      thinking: this.thinking,
+      mode: this.mode,
+      reviewMode: this.reviewMode,
+      reviewIndex: this.reviewIndex,
+      reviewTotal: this.reviewMoves.length,
+    };
+  }
+}
+
+
+
+/* ===== js/main.js ===== */
+// main.js — DOM 이벤트 와이어링: 캔버스 입력, 버튼, 상태 표시
+
+const $ = (id) => document.getElementById(id);
+
+const canvas = $('board');
+const view = new BoardView(canvas);
+const ctrl = new GameController();
+let hover = null;
+
+// ----- 렌더 -----
+function render() { view.draw(ctrl.game, hover, ctrl.reviewMode); }
+function relayout() { view.layout(19); render(); }
+
+ctrl.onChange = (st) => { updateStatus(st); render(); };
+
+function updateStatus(st) {
+  const dot = $('turn-dot');
+  const txt = $('turn-text');
+  dot.className = 'dot ' + (st.turn === BLACK ? 'black' : 'white');
+
+  if (st.thinking) {
+    txt.textContent = 'AI 생각 중…';
+  } else if (st.ended) {
+    txt.textContent = '대국 종료';
+  } else if (st.reviewMode) {
+    txt.textContent = '복기 모드';
+  } else {
+    txt.textContent = (st.turn === BLACK ? '흑' : '백') + ' 차례';
+  }
+
+  $('move-no').textContent = st.moveNumber;
+  $('cap-black').textContent = st.captures[BLACK];
+  $('cap-white').textContent = st.captures[2];
+
+  // 결과
+  const resBox = $('result');
+  if (st.ended && st.result) {
+    let msg = '';
+    if (st.result.type === 'resign') {
+      msg = (st.result.winner === BLACK ? '흑' : '백') + ' 불계승 (상대 기권)';
+    } else if (st.result.type === 'passed') {
+      msg = '양측 패스 — 대국 종료 (집계산은 3단계에서 지원)';
+    }
+    resBox.textContent = msg;
+    resBox.hidden = false;
+  } else {
+    resBox.hidden = true;
+  }
+
+  // 진행 버튼 활성/비활성
+  const inReview = st.reviewMode;
+  $('btn-pass').disabled = inReview || st.thinking || st.ended;
+  $('btn-undo').disabled = inReview || st.thinking || st.moveNumber === 0;
+  $('btn-resign').disabled = inReview || st.ended;
+
+  // 복기 컨트롤
+  const rev = $('review-controls');
+  rev.hidden = !inReview;
+  if (inReview) {
+    $('rev-label').textContent = `${st.reviewIndex} / ${st.reviewTotal}`;
+  }
+}
+
+// ----- 캔버스 입력 -----
+canvas.addEventListener('mousemove', (e) => {
+  const g = view.pixelToGrid(e.clientX, e.clientY);
+  if ((g && (!hover || g.x !== hover.x || g.y !== hover.y)) || (!g && hover)) {
+    hover = g; render();
+  }
+});
+canvas.addEventListener('mouseleave', () => { hover = null; render(); });
+canvas.addEventListener('click', (e) => {
+  const g = view.pixelToGrid(e.clientX, e.clientY);
+  if (g) ctrl.humanPlay(g.x, g.y);
+});
+canvas.addEventListener('touchend', (e) => {
+  if (e.cancelable) e.preventDefault();
+  const t = e.changedTouches[0];
+  if (!t) return;
+  const g = view.pixelToGrid(t.clientX, t.clientY);
+  if (g) ctrl.humanPlay(g.x, g.y);
+  hover = null;
+  render();
+}, { passive: false });
+
+// ----- 진행 버튼 -----
+$('btn-pass').addEventListener('click', () => ctrl.pass());
+$('btn-undo').addEventListener('click', () => ctrl.undo());
+$('btn-resign').addEventListener('click', () => {
+  if (confirm('기권하시겠습니까?')) ctrl.resign();
+});
+
+// ----- 새 대국 -----
+$('sel-mode').addEventListener('change', (e) => {
+  $('level-row').hidden = e.target.value !== 'ai';
+});
+$('btn-new').addEventListener('click', () => {
+  ctrl.newGame({
+    mode: $('sel-mode').value,
+    aiLevel: $('sel-level').value,
+    handicap: parseInt($('sel-handicap').value, 10) || 0,
+  });
+});
+
+// ----- 기보 -----
+function nowStr() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function currentMeta() {
+  return {
+    date: nowStr(),
+    handicap: ctrl.game.handicap,
+    pb: '흑',
+    pw: ctrl.mode === 'ai' ? `AI(${$('sel-level').value})` : '백',
+  };
+}
+
+$('btn-save').addEventListener('click', () => {
+  if (ctrl.game.moves.length === 0) { alert('저장할 수순이 없습니다.'); return; }
+  const name = prompt('기보 이름', `대국 ${nowStr()}`);
+  if (name === null) return;
+  saveKifu(name, ctrl.game, currentMeta());
+  renderSavedList();
+});
+
+$('btn-sgf').addEventListener('click', () => {
+  if (ctrl.game.moves.length === 0) { alert('내보낼 수순이 없습니다.'); return; }
+  const sgf = movesToSGF(ctrl.game.moves, ctrl.game.size, currentMeta());
+  download(`baduk-${Date.now()}.sgf`, sgf, 'application/x-go-sgf');
+});
+
+$('btn-json').addEventListener('click', () => {
+  if (ctrl.game.moves.length === 0) { alert('내보낼 수순이 없습니다.'); return; }
+  const json = gameToJSON(ctrl.game, currentMeta());
+  download(`baduk-${Date.now()}.json`, json, 'application/json');
+});
+
+// 복기 네비게이션
+document.querySelectorAll('[data-rev]').forEach((btn) => {
+  btn.addEventListener('click', () => ctrl.reviewStep(btn.dataset.rev));
+});
+$('btn-continue').addEventListener('click', () => ctrl.continueFromReview());
+
+// 저장된 기보 목록
+function renderSavedList() {
+  const ul = $('saved-list');
+  const list = listSaved();
+  ul.innerHTML = '';
+  if (list.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '저장된 기보가 없습니다.';
+    ul.appendChild(li);
+    return;
+  }
+  list.forEach((kifu, idx) => {
+    const li = document.createElement('li');
+
+    const info = document.createElement('div');
+    info.className = 'name';
+    const cnt = (kifu.moves || []).length;
+    info.innerHTML = `<div>${escapeHtml(kifu.name)}</div>` +
+      `<div class="sub2">${cnt}수${kifu.handicap ? ` · ${kifu.handicap}점` : ''}` +
+      `${kifu.meta && kifu.meta.date ? ` · ${escapeHtml(kifu.meta.date)}` : ''}</div>`;
+
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = '복기';
+    loadBtn.addEventListener('click', () => ctrl.loadKifu(kifu));
+
+    const delBtn = document.createElement('button');
+    delBtn.textContent = '삭제';
+    delBtn.className = 'danger';
+    delBtn.addEventListener('click', () => {
+      if (confirm(`"${kifu.name}" 기보를 삭제할까요?`)) { deleteKifu(idx); renderSavedList(); }
+    });
+
+    li.append(info, loadBtn, delBtn);
+    ul.appendChild(li);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// ----- 초기화 -----
+function init() {
+  relayout();
+  ctrl.newGame({ mode: 'local', handicap: 0 });
+  renderSavedList();
+}
+window.addEventListener('resize', relayout);
+window.addEventListener('orientationchange', () => setTimeout(relayout, 200));
+init();
+
+</script>
+</body>
+</html>
