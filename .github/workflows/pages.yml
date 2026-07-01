@@ -1,0 +1,50 @@
+name: Deploy Baduk
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Build static site
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          mkdir dist
+          cp baduk.html dist/index.html
+          cp baduk.html dist/baduk.html
+          python - <<'PY'
+          import json, os, pathlib
+          config = {
+              "supabaseUrl": os.environ["SUPABASE_URL"],
+              "supabasePublishableKey": os.environ["SUPABASE_PUBLISHABLE_KEY"],
+          }
+          pathlib.Path("dist/config.js").write_text(
+              "window.APP_CONFIG = " + json.dumps(config) + ";\n",
+              encoding="utf-8",
+          )
+          PY
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

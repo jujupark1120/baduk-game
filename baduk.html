@@ -39,6 +39,23 @@ html, body {
   font-size: 28px;
   letter-spacing: 1px;
 }
+.topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.account-btn { padding: 7px 11px; font-size: 13px; }
+.auth-overlay {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+  padding: 18px; background: rgba(10, 14, 22, 0.78);
+}
+.auth-overlay[hidden] { display: none; }
+.auth-card { width: min(380px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.auth-card h2 { margin: 0 0 6px; }
+.auth-card .hint { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.auth-tabs button.active { background: var(--accent); color: #06122b; font-weight: 700; }
+.auth-card label { display: block; margin: 10px 0; color: var(--muted); font-size: 13px; }
+.auth-card input { width: 100%; margin-top: 5px; padding: 10px; color: var(--text); background: #1f2734; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.auth-submit { width: 100%; margin-top: 6px; }
+.auth-guest { width: 100%; margin-top: 8px; background: transparent; }
+.auth-message { min-height: 20px; margin: 10px 0 0; font-size: 13px; color: #ffb3bd; }
 .topbar .rom {
   font-size: 14px;
   color: var(--muted);
@@ -245,7 +262,10 @@ select {
 <body>
   <div class="app">
     <header class="topbar">
-      <h1>바둑 <span class="rom">Baduk</span></h1>
+      <div class="topline">
+        <h1>바둑 <span class="rom">Baduk</span></h1>
+        <button id="btn-account" class="account-btn">로그인</button>
+      </div>
       <p class="sub">기원 온라인 · 1단계 — 로컬 &amp; AI 대전</p>
     </header>
 
@@ -342,6 +362,29 @@ select {
     </footer>
   </div>
 
+  <div id="auth-overlay" class="auth-overlay" hidden>
+    <section class="auth-card" aria-modal="true" role="dialog" aria-labelledby="auth-title">
+      <h2 id="auth-title">내 바둑 아이디</h2>
+      <p class="hint">별명과 숫자 4자리 PIN으로 접속하세요.</p>
+      <div class="auth-tabs">
+        <button id="tab-login" class="active">로그인</button>
+        <button id="tab-register">새 아이디</button>
+      </div>
+      <form id="auth-form">
+        <label>별명
+          <input id="auth-nickname" maxlength="12" autocomplete="username" placeholder="한글·영문·숫자 2~12자" required />
+        </label>
+        <label>PIN
+          <input id="auth-pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="숫자 4자리" required />
+        </label>
+        <button id="auth-submit" class="primary auth-submit" type="submit">로그인</button>
+        <button id="auth-guest" class="auth-guest" type="button">게스트로 시작</button>
+        <p id="auth-message" class="auth-message" role="alert"></p>
+      </form>
+    </section>
+  </div>
+
+  <script src="config.js"></script>
   <script>
 /* ===== js/rules.js ===== */
 // rules.js — 바둑 규칙 엔진 (순수 로직, UI/렌더링과 분리)
@@ -1138,6 +1181,89 @@ const view = new BoardView(canvas);
 const ctrl = new GameController();
 let hover = null;
 
+// ----- 별명 계정 -----
+const PLAYER_SESSION_KEY = 'baduk_player_session_v1';
+let authMode = 'login';
+let playerSession = loadPlayerSession();
+
+function loadPlayerSession() {
+  try { return JSON.parse(localStorage.getItem(PLAYER_SESSION_KEY) || 'null'); }
+  catch { return null; }
+}
+
+function updateAccountButton() {
+  $('btn-account').textContent = playerSession ? `${playerSession.nickname} · ${playerSession.rank}` : '로그인';
+}
+
+function openAuth() {
+  $('auth-message').textContent = '';
+  $('auth-overlay').hidden = false;
+  setTimeout(() => $('auth-nickname').focus(), 0);
+}
+
+function closeAuth() { $('auth-overlay').hidden = true; }
+
+function setAuthMode(mode) {
+  authMode = mode;
+  $('tab-login').classList.toggle('active', mode === 'login');
+  $('tab-register').classList.toggle('active', mode === 'register');
+  $('auth-submit').textContent = mode === 'login' ? '로그인' : '아이디 만들기';
+  $('auth-pin').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  $('auth-message').textContent = '';
+}
+
+async function playerRpc(name, body) {
+  const config = window.APP_CONFIG || {};
+  if (!config.supabaseUrl || !config.supabasePublishableKey)
+    throw new Error('계정 서버 설정이 아직 연결되지 않았습니다.');
+  const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/${name}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: config.supabasePublishableKey,
+      Authorization: `Bearer ${config.supabasePublishableKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || '계정 서버에 연결하지 못했습니다.');
+  return data;
+}
+
+$('tab-login').addEventListener('click', () => setAuthMode('login'));
+$('tab-register').addEventListener('click', () => setAuthMode('register'));
+$('auth-guest').addEventListener('click', closeAuth);
+$('btn-account').addEventListener('click', () => {
+  if (!playerSession) { openAuth(); return; }
+  if (confirm(`${playerSession.nickname} 아이디에서 로그아웃할까요?`)) {
+    localStorage.removeItem(PLAYER_SESSION_KEY);
+    playerSession = null;
+    updateAccountButton();
+    openAuth();
+  }
+});
+$('auth-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const nickname = $('auth-nickname').value.trim();
+  const pin = $('auth-pin').value;
+  const submit = $('auth-submit');
+  const message = $('auth-message');
+  submit.disabled = true;
+  message.textContent = '연결 중…';
+  try {
+    const fn = authMode === 'login' ? 'login_player' : 'register_player';
+    playerSession = await playerRpc(fn, { p_nickname: nickname, p_pin: pin });
+    localStorage.setItem(PLAYER_SESSION_KEY, JSON.stringify(playerSession));
+    $('auth-pin').value = '';
+    updateAccountButton();
+    closeAuth();
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+});
+
 // ----- 렌더 -----
 function render() { view.draw(ctrl.game, hover, ctrl.reviewMode); }
 function relayout() { view.layout(19); render(); }
@@ -1323,6 +1449,8 @@ function init() {
   relayout();
   ctrl.newGame({ mode: 'local', handicap: 0 });
   renderSavedList();
+  updateAccountButton();
+  if (!playerSession) openAuth();
 }
 window.addEventListener('resize', relayout);
 window.addEventListener('orientationchange', () => setTimeout(relayout, 200));
