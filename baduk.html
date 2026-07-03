@@ -1295,6 +1295,7 @@ class GameController {
     this.humanColor = BLACK;
     this.aiColor = WHITE;
     this.thinking = false;
+    this.aiRequestId = 0;
     this.onChange = () => {};
 
     // 복기(review) 상태
@@ -1310,6 +1311,7 @@ class GameController {
     this.aiLevel = opts.aiLevel || 'medium';
     this.reviewMode = false;
     this.thinking = false;
+    this.aiRequestId++;
 
     this.game = new GoGame(19);
     const h = opts.handicap || 0;
@@ -1381,13 +1383,25 @@ class GameController {
   maybeAI() {
     if (this.mode !== 'ai' || this.game.ended) return;
     if (this.game.turn !== this.aiColor) return;
+    const requestId = ++this.aiRequestId;
+    const scheduledGame = this.game;
     this.thinking = true;
     this.emit();
     // 약간의 지연으로 "생각하는" 느낌 + UI 갱신 보장
     setTimeout(() => {
-      const mv = chooseMove(this.game, this.aiColor, this.aiLevel);
-      if (mv.pass) this.game.pass();
-      else this.game.play(mv.x, mv.y);
+      // 새 대국·계가 진입·턴 변경 뒤에는 예약된 AI 착수를 폐기한다.
+      const cancelled = requestId !== this.aiRequestId ||
+        this.game !== scheduledGame || this.mode !== 'ai' ||
+        scheduledGame.ended || scheduledGame.turn !== this.aiColor;
+      if (cancelled) {
+        this.thinking = false;
+        this.emit();
+        return;
+      }
+
+      const mv = chooseMove(scheduledGame, this.aiColor, this.aiLevel);
+      if (mv.pass) scheduledGame.pass();
+      else scheduledGame.play(mv.x, mv.y); // 정상 착수는 passes를 0으로 초기화
       this.thinking = false;
       this.emit();
     }, 350);
