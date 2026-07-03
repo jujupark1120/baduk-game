@@ -150,7 +150,11 @@ html, body {
   border-radius: 8px;
   font-weight: 600;
   color: #ffd479;
+  white-space: pre-line;
 }
+.scoring-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.scoring-actions[hidden] { display: none; }
+.scoring-actions button { padding: 7px 8px; font-size: 12px; }
 
 /* 버튼 */
 button {
@@ -293,6 +297,10 @@ select {
             <span>백 따냄 <b id="cap-white">0</b></span>
           </div>
           <div id="result" class="result" hidden></div>
+          <div id="scoring-actions" class="scoring-actions" hidden>
+            <button id="btn-score-confirm" class="primary">계가 확정</button>
+            <button id="btn-score-cancel">대국으로 돌아가기</button>
+          </div>
         </div>
 
         <!-- 진행 버튼 -->
@@ -437,6 +445,7 @@ class GoGame {
     this.moves = [];           // 기보(수순): {color,x,y} 또는 {color,pass:true}
     this.history = [];         // 무르기용 델타 스택
     this.handicap = 0;
+    this.deadStones = new Set(); // 계가 때 사용자가 선택한 사석
   }
 
   // 빈 보드 상태에서 호출. h는 2..9.
@@ -577,8 +586,96 @@ class GoGame {
     this.lastMove = null;
     this.turn = opponent(color);
     this.moveNumber++;
-    if (this.passes >= 2) { this.ended = true; this.result = { type: 'passed' }; }
-    return { ok: true, ended: this.ended };
+    if (this.passes >= 2) {
+      this.enterScoringMode();
+      return { ok: true, ended: true, scoring: true };
+    }
+    return { ok: true, ended: false, scoring: false };
+  }
+
+  enterScoringMode() {
+    this.ended = true;
+    this.deadStones.clear();
+    this.result = { type: 'scoring' };
+  }
+
+  toggleDeadGroup(x, y) {
+    if (!this.result || this.result.type !== 'scoring') return { ok: false };
+    if (!this.inBounds(x, y) || this.board[y][x] === EMPTY) return { ok: false };
+    const group = this.groupInfo(x, y);
+    const keys = group.stones.map(([sx, sy]) => sy * this.size + sx);
+    const remove = keys.every(key => this.deadStones.has(key));
+    for (const key of keys) {
+      if (remove) this.deadStones.delete(key);
+      else this.deadStones.add(key);
+    }
+    return { ok: true, selected: !remove };
+  }
+
+  calculateScore(komi = 6.5) {
+    const n = this.size;
+    const board = this.board.map(row => row.slice());
+    let deadBlack = 0, deadWhite = 0;
+    for (const key of this.deadStones) {
+      const x = key % n, y = Math.floor(key / n);
+      if (board[y][x] === BLACK) deadBlack++;
+      else if (board[y][x] === WHITE) deadWhite++;
+      board[y][x] = EMPTY;
+    }
+
+    const visited = new Set();
+    let blackTerritory = 0, whiteTerritory = 0, neutral = 0;
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const startKey = y * n + x;
+      if (board[y][x] !== EMPTY || visited.has(startKey)) continue;
+      const stack = [[x, y]];
+      const region = [];
+      const borders = new Set();
+      visited.add(startKey);
+      while (stack.length) {
+        const [cx, cy] = stack.pop();
+        region.push([cx, cy]);
+        for (const [nx, ny] of this.neighbors(cx, cy)) {
+          const stone = board[ny][nx];
+          if (stone === EMPTY) {
+            const key = ny * n + nx;
+            if (!visited.has(key)) { visited.add(key); stack.push([nx, ny]); }
+          } else {
+            borders.add(stone);
+          }
+        }
+      }
+      if (borders.size === 1 && borders.has(BLACK)) blackTerritory += region.length;
+      else if (borders.size === 1 && borders.has(WHITE)) whiteTerritory += region.length;
+      else neutral += region.length;
+    }
+
+    const blackCaptures = this.captures[BLACK] + deadWhite;
+    const whiteCaptures = this.captures[WHITE] + deadBlack;
+    const blackTotal = blackTerritory + blackCaptures;
+    const whiteTotal = whiteTerritory + whiteCaptures + komi;
+    const winner = blackTotal > whiteTotal ? BLACK : WHITE;
+    return {
+      blackTerritory, whiteTerritory, neutral,
+      blackCaptures, whiteCaptures, deadBlack, deadWhite,
+      komi, blackTotal, whiteTotal, winner,
+      margin: Math.abs(blackTotal - whiteTotal),
+    };
+  }
+
+  confirmScore() {
+    if (!this.result || this.result.type !== 'scoring') return { ok: false };
+    const score = this.calculateScore();
+    this.result = { type: 'score', score };
+    return { ok: true, score };
+  }
+
+  cancelScoring() {
+    if (!this.result || this.result.type !== 'scoring') return { ok: false };
+    this.deadStones.clear();
+    this.undo();
+    this.undo();
+    return { ok: true };
   }
 
   resign(color = this.turn) {
@@ -742,7 +839,11 @@ class BoardView {
     // 돌
     for (let y = 0; y < this.size; y++)
       for (let x = 0; x < this.size; x++)
-        if (game.board[y][x] !== EMPTY) this.drawStone(x, y, game.board[y][x], 1);
+        if (game.board[y][x] !== EMPTY) {
+          const dead = game.deadStones && game.deadStones.has(y * this.size + x);
+          this.drawStone(x, y, game.board[y][x], dead ? 0.35 : 1);
+          if (dead) this.drawDeadMark(x, y);
+        }
 
     // 복기 중에는 현재 판에 살아 있는 돌에 수순 번호를 표시한다.
     if (showMoveNumbers) this.drawMoveNumbers(game);
@@ -776,6 +877,20 @@ class BoardView {
     ctx.beginPath();
     ctx.arc(p.px, p.py, r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  drawDeadMark(x, y) {
+    const ctx = this.ctx;
+    const p = this.gridToPixel(x, y);
+    const r = this.cell * 0.24;
+    ctx.save();
+    ctx.strokeStyle = '#e0586b';
+    ctx.lineWidth = Math.max(2, this.cell * 0.07);
+    ctx.beginPath();
+    ctx.moveTo(p.px - r, p.py - r); ctx.lineTo(p.px + r, p.py + r);
+    ctx.moveTo(p.px + r, p.py - r); ctx.lineTo(p.px - r, p.py + r);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -840,12 +955,33 @@ function chooseMove(game, color, level) {
 
   if (engineLevel === 'easy') {
     const caps = pool.filter(m => m.captured > 0);
-    if (caps.length && Math.random() < 0.7) return pick(caps);
-    return pick(pool);
+    if (caps.length && Math.random() < 0.82) {
+      const maxCapture = Math.max(...caps.map(m => m.captured));
+      return pick(caps.filter(m => m.captured === maxCapture));
+    }
+    const rescues = pool.filter(m => savedAtariStones(game, m, color) > 0);
+    if (rescues.length && Math.random() < 0.65) return pick(rescues);
+    const sensible = pool.filter(m => analyzeMoveSafety(game, m, color).immediateLoss === 0);
+    const safePool = sensible.length ? sensible : pool;
+    if (game.moveNumber < 24) {
+      const openings = safePool.filter(m => isGoodOpeningPoint(game, m));
+      if (openings.length && Math.random() < 0.75) return pick(openings);
+    } else {
+      const related = safePool.filter(m => isMeaningfulCandidate(game, m, color));
+      if (related.length && Math.random() < 0.7) return pick(related);
+    }
+    return pick(safePool);
+  }
+
+  // 상급은 전체 빈칸을 모두 동등하게 보지 않고 전투·연결·초반 정석 후보로 좁힌다.
+  let scoringPool = pool;
+  if (engineLevel === 'hard') {
+    const meaningful = pool.filter(m => isMeaningfulCandidate(game, m, color));
+    if (meaningful.length >= 3) scoringPool = meaningful;
   }
 
   let best = [], bestScore = -Infinity;
-  for (const m of pool) {
+  for (const m of scoringPool) {
     const s = scoreMove(game, m, color, engineLevel);
     if (s > bestScore) { bestScore = s; best = [m]; }
     else if (s === bestScore) best.push(m);
@@ -884,17 +1020,133 @@ function isUrgentMove(game, move, color) {
   return false;
 }
 
+// 이 수로 단수 상태에서 빠져나오는 내 돌의 수.
+function savedAtariStones(game, move, color) {
+  const counted = new Set();
+  let saved = 0;
+  for (const [nx, ny] of game.neighbors(move.x, move.y)) {
+    if (game.board[ny][nx] !== color) continue;
+    const group = game.groupInfo(nx, ny);
+    if (group.liberties !== 1) continue;
+    const key = group.stones.map(([x, y]) => y * game.size + x).sort((a, b) => a - b)[0];
+    if (!counted.has(key)) {
+      counted.add(key);
+      saved += group.stones.length;
+    }
+  }
+  return saved;
+}
+
+// 착수 직후 활로와 상대의 즉시 포획 가능성을 한 수만 시험한다.
+function analyzeMoveSafety(game, move, color) {
+  const result = game.probe(move.x, move.y, color);
+  if (!result.legal) return { liberties: 0, immediateLoss: 999 };
+
+  const opp = opponent(color);
+  game.board[move.y][move.x] = color;
+  for (const [x, y] of result.captured) game.board[y][x] = EMPTY;
+
+  const mine = game.groupInfo(move.x, move.y);
+  let immediateLoss = 0;
+  if (mine.liberties === 1) {
+    const liberties = new Map();
+    for (const [sx, sy] of mine.stones) {
+      for (const [nx, ny] of game.neighbors(sx, sy)) {
+        if (game.board[ny][nx] === EMPTY) liberties.set(`${nx},${ny}`, [nx, ny]);
+      }
+    }
+    const liberty = liberties.values().next().value;
+    if (liberty) {
+      const reply = game.probe(liberty[0], liberty[1], opp);
+      if (reply.legal && reply.captured.length >= mine.stones.length)
+        immediateLoss = mine.stones.length;
+    }
+  }
+
+  game.board[move.y][move.x] = EMPTY;
+  for (const [x, y] of result.captured) game.board[y][x] = opp;
+  return { liberties: mine.liberties, immediateLoss };
+}
+
+function nearbyStoneCount(game, x, y, radius) {
+  let count = 0;
+  for (let ny = Math.max(0, y - radius); ny <= Math.min(game.size - 1, y + radius); ny++)
+    for (let nx = Math.max(0, x - radius); nx <= Math.min(game.size - 1, x + radius); nx++)
+      if (Math.abs(nx - x) + Math.abs(ny - y) <= radius && game.board[ny][nx] !== EMPTY)
+        count++;
+  return count;
+}
+
+function groupKey(game, group) {
+  return group.stones
+    .map(([x, y]) => y * game.size + x)
+    .sort((a, b) => a - b)[0];
+}
+
+function adjacentGroupStats(game, move, color) {
+  const ownGroups = new Set();
+  const oppGroups = new Set();
+  let ownNeighbors = 0, oppNeighbors = 0;
+  const opp = opponent(color);
+  for (const [nx, ny] of game.neighbors(move.x, move.y)) {
+    const stone = game.board[ny][nx];
+    if (stone === color) {
+      ownNeighbors++;
+      ownGroups.add(groupKey(game, game.groupInfo(nx, ny)));
+    } else if (stone === opp) {
+      oppNeighbors++;
+      oppGroups.add(groupKey(game, game.groupInfo(nx, ny)));
+    }
+  }
+  return {
+    ownNeighbors,
+    oppNeighbors,
+    ownGroups: ownGroups.size,
+    oppGroups: oppGroups.size,
+  };
+}
+
+function isGoodOpeningPoint(game, move) {
+  const dx = Math.min(move.x, game.size - 1 - move.x);
+  const dy = Math.min(move.y, game.size - 1 - move.y);
+  return dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4;
+}
+
+function isMeaningfulCandidate(game, move, color) {
+  if (move.captured > 0 || savedAtariStones(game, move, color) > 0) return true;
+  const groups = adjacentGroupStats(game, move, color);
+  if (groups.oppNeighbors > 0 || groups.ownGroups >= 2 || groups.oppGroups >= 2) return true;
+  if (game.lastMove) {
+    const d = Math.abs(game.lastMove.x - move.x) + Math.abs(game.lastMove.y - move.y);
+    if (d <= 3) return true;
+  }
+  if (game.moveNumber < 24 && isGoodOpeningPoint(game, move)) return true;
+  return nearbyStoneCount(game, move.x, move.y, 2) > 0;
+}
+
 function scoreMove(game, m, color, level) {
   let s = 0;
   const opp = opponent(color);
 
-  // 따냄은 매우 좋다
-  s += m.captured * 12;
+  // 즉시 따냄과 단수에 몰린 내 돌 살리기를 가장 먼저 본다.
+  s += m.captured * 30;
+  s += savedAtariStones(game, m, color) * 22;
 
-  // 착수 후 내 그룹 활로 (자충 회피)
-  const myLib = game.libertiesAfter(m.x, m.y, color);
-  if (myLib === 1 && m.captured === 0) s -= 8; // 자충(self-atari)
+  // 착수 뒤 바로 잡힐 수 있는 수는 강하게 감점한다.
+  const safety = analyzeMoveSafety(game, m, color);
+  const myLib = safety.liberties;
+  if (myLib === 1 && m.captured === 0) s -= 18;
+  if (safety.immediateLoss > 0)
+    s -= safety.immediateLoss * (level === 'hard' ? 45 : 28);
   s += Math.min(myLib, 4) * 0.5;
+
+  const groups = adjacentGroupStats(game, m, color);
+  if (groups.ownGroups >= 2) s += (groups.ownGroups - 1) * 8; // 내 돌 연결
+  if (groups.oppGroups >= 2) s += (groups.oppGroups - 1) * 7; // 상대 돌 사이 끊기
+  s += groups.oppNeighbors * 2.5;                              // 접촉·압박
+
+  // 내 돌로만 거의 둘러싸인 자리는 집이 아니더라도 대개 가치가 낮다.
+  if (groups.ownNeighbors >= 3 && groups.oppNeighbors === 0) s -= 12;
 
   // 주변 분석
   for (const [nx, ny] of game.neighbors(m.x, m.y)) {
@@ -902,7 +1154,8 @@ function scoreMove(game, m, color, level) {
     if (v === opp) {
       const gi = game.groupInfo(nx, ny);
       if (gi.liberties === 1) s += 6;       // 상대를 단수/따냄 직전
-      else if (gi.liberties === 2) s += 1.5; // 공격
+      else if (gi.liberties === 2) s += 5;  // 공격
+      else if (gi.liberties === 3) s += 1.5;
     } else if (v === color) {
       const gi = game.groupInfo(nx, ny);
       if (gi.liberties === 1) s += 5;        // 단수당한 내 그룹 잇기/살리기
@@ -912,17 +1165,28 @@ function scoreMove(game, m, color, level) {
   // 상대 마지막 수 근처(접촉/응수)
   if (game.lastMove) {
     const d = Math.abs(game.lastMove.x - m.x) + Math.abs(game.lastMove.y - m.y);
-    if (d <= 2) s += (3 - d);
+    if (d === 1) s += 7;
+    else if (d === 2) s += 5;
+    else if (d === 3) s += 2;
   }
 
-  // 세력: 초반엔 3~5선 선호 (상급)
-  if (level === 'hard') {
-    const edge = Math.min(m.x, m.y, game.size - 1 - m.x, game.size - 1 - m.y);
-    if (edge >= 2 && edge <= 4) s += 1.2;
-    if (edge === 0) s -= 1.5;
+  // 의미 없는 1~2선 착수와 중후반의 동떨어진 빈 공간 착수를 줄인다.
+  const edge = Math.min(m.x, m.y, game.size - 1 - m.x, game.size - 1 - m.y);
+  if (edge === 0) s -= 7;
+  else if (edge === 1) s -= 2.5;
+  else if (game.moveNumber < 50 && edge <= 4) s += level === 'hard' ? 2 : 1;
+
+  if (game.moveNumber < 24) {
+    if (isGoodOpeningPoint(game, m)) s += level === 'hard' ? 6 : 3;
+    else if (nearbyStoneCount(game, m.x, m.y, 3) === 0) s -= level === 'hard' ? 6 : 3;
   }
 
-  s += Math.random() * (level === 'hard' ? 0.5 : 1.5);
+  const nearby2 = nearbyStoneCount(game, m.x, m.y, 2);
+  const nearby3 = nearbyStoneCount(game, m.x, m.y, 3);
+  if (game.moveNumber >= 20 && nearby3 === 0) s -= level === 'hard' ? 12 : 7;
+  if (nearby2 > 0) s += Math.min(nearby2, 4) * (level === 'hard' ? 1.4 : 0.9);
+
+  s += Math.random() * (level === 'hard' ? 0.25 : 1.2);
   return s;
 }
 
@@ -1060,7 +1324,13 @@ class GameController {
   }
 
   humanPlay(x, y) {
-    if (this.reviewMode || this.thinking || this.game.ended) return;
+    if (this.reviewMode || this.thinking) return;
+    if (this.game.result && this.game.result.type === 'scoring') {
+      const result = this.game.toggleDeadGroup(x, y);
+      if (result.ok) this.emit();
+      return result;
+    }
+    if (this.game.ended) return;
     if (this.mode === 'ai' && this.game.turn !== this.humanColor) return;
     const r = this.game.play(x, y);
     if (!r.ok) return r;
@@ -1072,8 +1342,9 @@ class GameController {
   pass() {
     if (this.reviewMode || this.thinking || this.game.ended) return;
     if (this.mode === 'ai' && this.game.turn !== this.humanColor) return;
-    this.game.pass();
+    const result = this.game.pass();
     this.emit();
+    if (result && result.scoring) return;
     this.maybeAI();
   }
 
@@ -1083,6 +1354,18 @@ class GameController {
     const loser = this.mode === 'ai' ? this.humanColor : this.game.turn;
     this.game.resign(loser);
     this.emit();
+  }
+
+  confirmScore() {
+    if (this.reviewMode) return;
+    const result = this.game.confirmScore();
+    if (result.ok) this.emit();
+  }
+
+  cancelScoring() {
+    if (this.reviewMode) return;
+    const result = this.game.cancelScoring();
+    if (result.ok) this.emit();
   }
 
   undo() {
@@ -1171,6 +1454,9 @@ class GameController {
       reviewMode: this.reviewMode,
       reviewIndex: this.reviewIndex,
       reviewTotal: this.reviewMoves.length,
+      scoringMode: !this.reviewMode && !!(g.result && g.result.type === 'scoring'),
+      score: g.result && g.result.type === 'scoring' ? g.calculateScore() :
+        (g.result && g.result.type === 'score' ? g.result.score : null),
     };
   }
 }
@@ -1341,6 +1627,14 @@ function relayout() { view.layout(19); render(); }
 
 ctrl.onChange = (st) => { updateStatus(st); render(); };
 
+function scoreSummary(score, final = false) {
+  const winner = score.winner === BLACK ? '흑' : '백';
+  const label = final ? '최종 결과' : '현재 예상';
+  return `흑 ${score.blackTotal}집 (영역 ${score.blackTerritory} + 잡은 돌 ${score.blackCaptures})\n` +
+    `백 ${score.whiteTotal}집 (영역 ${score.whiteTerritory} + 잡은 돌 ${score.whiteCaptures} + 덤 ${score.komi})\n` +
+    `중립 ${score.neutral}집 · ${label}: ${winner} ${score.margin}집 승`;
+}
+
 function updateStatus(st) {
   const dot = $('turn-dot');
   const txt = $('turn-text');
@@ -1348,6 +1642,8 @@ function updateStatus(st) {
 
   if (st.thinking) {
     txt.textContent = 'AI 생각 중…';
+  } else if (st.scoringMode) {
+    txt.textContent = '계가 모드';
   } else if (st.ended) {
     txt.textContent = '대국 종료';
   } else if (st.reviewMode) {
@@ -1366,8 +1662,10 @@ function updateStatus(st) {
     let msg = '';
     if (st.result.type === 'resign') {
       msg = (st.result.winner === BLACK ? '흑' : '백') + ' 불계승 (상대 기권)';
-    } else if (st.result.type === 'passed') {
-      msg = '양측 패스 — 대국 종료 (집계산은 3단계에서 지원)';
+    } else if (st.result.type === 'scoring') {
+      msg = '사석으로 볼 돌 그룹을 눌러 선택하거나 해제하세요.\n' + scoreSummary(st.score);
+    } else if (st.result.type === 'score') {
+      msg = scoreSummary(st.score, true);
     }
     resBox.textContent = msg;
     resBox.hidden = false;
@@ -1378,8 +1676,11 @@ function updateStatus(st) {
   // 진행 버튼 활성/비활성
   const inReview = st.reviewMode;
   $('btn-pass').disabled = inReview || st.thinking || st.ended;
-  $('btn-undo').disabled = inReview || st.thinking || st.moveNumber === 0;
+  $('btn-undo').disabled = inReview || st.thinking || st.ended || st.moveNumber === 0;
   $('btn-resign').disabled = inReview || st.ended;
+  const scoringActions = $('scoring-actions');
+  scoringActions.hidden = !st.scoringMode;
+  scoringActions.style.display = st.scoringMode ? 'grid' : 'none';
 
   // 복기 컨트롤
   const rev = $('review-controls');
@@ -1417,6 +1718,10 @@ $('btn-undo').addEventListener('click', () => ctrl.undo());
 $('btn-resign').addEventListener('click', () => {
   if (confirm('기권하시겠습니까?')) ctrl.resign();
 });
+$('btn-score-confirm').addEventListener('click', () => {
+  if (confirm('선택한 사석과 현재 점수로 계가를 확정할까요?')) ctrl.confirmScore();
+});
+$('btn-score-cancel').addEventListener('click', () => ctrl.cancelScoring());
 
 // ----- 새 대국 -----
 $('sel-mode').addEventListener('change', (e) => {
