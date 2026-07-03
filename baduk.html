@@ -1307,8 +1307,23 @@ $('auth-form').addEventListener('submit', async (event) => {
   try {
     const fn = authMode === 'login' ? 'login_player' : 'register_player';
     const body = { p_nickname: nickname, p_pin: pin };
-    if (authMode === 'register') body.p_rank = $('auth-rank').value;
     playerSession = await playerRpc(fn, body);
+    if (authMode === 'register') {
+      const selectedRank = $('auth-rank').value;
+      if (playerSession && playerSession.token) {
+        try {
+          const rankResult = await playerRpc('update_player_rank', {
+            p_token: playerSession.token,
+            p_rank: selectedRank,
+          });
+          playerSession.rank = rankResult.rank;
+        } catch (rankError) {
+          alert('아이디는 만들어졌지만 급수 저장에 실패했습니다. 로그인 후 상단에서 급수를 다시 선택해 주세요.');
+        }
+      } else {
+        alert('아이디는 만들어졌지만 급수를 바로 저장하지 못했습니다. 로그인 후 상단에서 급수를 선택해 주세요.');
+      }
+    }
     localStorage.setItem(PLAYER_SESSION_KEY, JSON.stringify(playerSession));
     $('auth-pin').value = '';
     updateAccountButton();
