@@ -41,6 +41,9 @@ html, body {
 }
 .topline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .account-btn { padding: 7px 11px; font-size: 13px; }
+.account-area { display: flex; align-items: center; gap: 8px; }
+.player-rank { min-width: 92px; padding: 7px 8px; }
+.player-rank[hidden] { display: none; }
 .auth-overlay {
   position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
   padding: 18px; background: rgba(10, 14, 22, 0.78);
@@ -264,7 +267,10 @@ select {
     <header class="topbar">
       <div class="topline">
         <h1>바둑 <span class="rom">Baduk</span></h1>
-        <button id="btn-account" class="account-btn">로그인</button>
+        <div class="account-area">
+          <select id="player-rank" class="player-rank" aria-label="내 급수" hidden></select>
+          <button id="btn-account" class="account-btn">로그인</button>
+        </div>
       </div>
       <p class="sub">기원 온라인 · 1단계 — 로컬 &amp; AI 대전</p>
     </header>
@@ -307,12 +313,8 @@ select {
             </select>
           </label>
           <label class="row" id="level-row" hidden>
-            <span>AI 급수</span>
-            <select id="sel-level">
-              <option value="easy">초급 (18~13급)</option>
-              <option value="medium" selected>중급 (12~7급)</option>
-              <option value="hard">상급 (6~1급)</option>
-            </select>
+            <span>AI 급수 (임시)</span>
+            <select id="sel-level" aria-label="AI 기력"></select>
           </label>
           <label class="row">
             <span>치수</span>
@@ -376,6 +378,9 @@ select {
         </label>
         <label>PIN
           <input id="auth-pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="current-password" placeholder="숫자 4자리" required />
+        </label>
+        <label id="auth-rank-label">본인 급수
+          <select id="auth-rank"></select>
         </label>
         <button id="auth-submit" class="primary auth-submit" type="submit">로그인</button>
         <button id="auth-guest" class="auth-guest" type="button">게스트로 시작</button>
@@ -820,6 +825,7 @@ class BoardView {
 //   hard   : 상급 (대략 6~1급)   — 중급 + 세력/근접 가중치
 
 function chooseMove(game, color, level) {
+  const engineLevel = normalizeAILevel(level);
   const moves = game.legalMoves(color);
   if (moves.length === 0) return { pass: true };
 
@@ -832,7 +838,7 @@ function chooseMove(game, color, level) {
   // 판이 많이 찬 뒤에도 의미 없는 끝내기만 남으면 먼저 패스한다.
   if (shouldPass(game, pool, color)) return { pass: true };
 
-  if (level === 'easy') {
+  if (engineLevel === 'easy') {
     const caps = pool.filter(m => m.captured > 0);
     if (caps.length && Math.random() < 0.7) return pick(caps);
     return pick(pool);
@@ -840,7 +846,7 @@ function chooseMove(game, color, level) {
 
   let best = [], bestScore = -Infinity;
   for (const m of pool) {
-    const s = scoreMove(game, m, color, level);
+    const s = scoreMove(game, m, color, engineLevel);
     if (s > bestScore) { bestScore = s; best = [m]; }
     else if (s === bestScore) best.push(m);
   }
@@ -1183,8 +1189,33 @@ let hover = null;
 
 // ----- 별명 계정 -----
 const PLAYER_SESSION_KEY = 'baduk_player_session_v1';
+const PLAYER_RANKS = [
+  ...Array.from({ length: 18 }, (_, i) => `${18 - i}급`),
+  ...Array.from({ length: 9 }, (_, i) => `아마 ${i + 1}단`),
+];
 let authMode = 'login';
 let playerSession = loadPlayerSession();
+
+function fillRankSelect(select, selected = '18급') {
+  select.innerHTML = '';
+  for (const rank of PLAYER_RANKS) {
+    const option = document.createElement('option');
+    option.value = rank;
+    option.textContent = rank;
+    option.selected = rank === selected;
+    select.appendChild(option);
+  }
+}
+
+// KataGo 서버 연결 전 임시 매핑. UI의 세부 기력은 유지하되 실제 엔진은 3단계다.
+function normalizeAILevel(rank) {
+  if (rank === 'easy' || rank === 'medium' || rank === 'hard') return rank;
+  if (rank.includes('단')) return 'hard';
+  const kyu = parseInt(rank, 10);
+  if (kyu >= 13) return 'easy';
+  if (kyu >= 7) return 'medium';
+  return 'hard';
+}
 
 function loadPlayerSession() {
   try { return JSON.parse(localStorage.getItem(PLAYER_SESSION_KEY) || 'null'); }
@@ -1192,7 +1223,9 @@ function loadPlayerSession() {
 }
 
 function updateAccountButton() {
-  $('btn-account').textContent = playerSession ? `${playerSession.nickname} · ${playerSession.rank}` : '로그인';
+  $('btn-account').textContent = playerSession ? `${playerSession.nickname} · 로그아웃` : '로그인';
+  $('player-rank').hidden = !playerSession;
+  if (playerSession) $('player-rank').value = playerSession.rank || '18급';
 }
 
 function openAuth() {
@@ -1209,6 +1242,7 @@ function setAuthMode(mode) {
   $('tab-register').classList.toggle('active', mode === 'register');
   $('auth-submit').textContent = mode === 'login' ? '로그인' : '아이디 만들기';
   $('auth-pin').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  $('auth-rank-label').hidden = mode === 'login';
   $('auth-message').textContent = '';
 }
 
@@ -1233,6 +1267,26 @@ async function playerRpc(name, body) {
 $('tab-login').addEventListener('click', () => setAuthMode('login'));
 $('tab-register').addEventListener('click', () => setAuthMode('register'));
 $('auth-guest').addEventListener('click', closeAuth);
+$('player-rank').addEventListener('change', async (event) => {
+  if (!playerSession) return;
+  const previous = playerSession.rank;
+  const next = event.target.value;
+  event.target.disabled = true;
+  try {
+    const result = await playerRpc('update_player_rank', {
+      p_token: playerSession.token,
+      p_rank: next,
+    });
+    playerSession.rank = result.rank;
+    localStorage.setItem(PLAYER_SESSION_KEY, JSON.stringify(playerSession));
+    updateAccountButton();
+  } catch (error) {
+    event.target.value = previous;
+    alert(error.message);
+  } finally {
+    event.target.disabled = false;
+  }
+});
 $('btn-account').addEventListener('click', () => {
   if (!playerSession) { openAuth(); return; }
   if (confirm(`${playerSession.nickname} 아이디에서 로그아웃할까요?`)) {
@@ -1252,7 +1306,9 @@ $('auth-form').addEventListener('submit', async (event) => {
   message.textContent = '연결 중…';
   try {
     const fn = authMode === 'login' ? 'login_player' : 'register_player';
-    playerSession = await playerRpc(fn, { p_nickname: nickname, p_pin: pin });
+    const body = { p_nickname: nickname, p_pin: pin };
+    if (authMode === 'register') body.p_rank = $('auth-rank').value;
+    playerSession = await playerRpc(fn, body);
     localStorage.setItem(PLAYER_SESSION_KEY, JSON.stringify(playerSession));
     $('auth-pin').value = '';
     updateAccountButton();
@@ -1446,6 +1502,9 @@ function escapeHtml(s) {
 
 // ----- 초기화 -----
 function init() {
+  fillRankSelect($('auth-rank'));
+  fillRankSelect($('player-rank'));
+  fillRankSelect($('sel-level'), '1급');
   relayout();
   ctrl.newGame({ mode: 'local', handicap: 0 });
   renderSavedList();
