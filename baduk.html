@@ -1345,6 +1345,16 @@ class GameController {
     if (this.reviewMode || this.thinking || this.game.ended) return;
     if (this.mode === 'ai' && this.game.turn !== this.humanColor) return;
     const result = this.game.pass();
+
+    if (this.mode === 'ai' && result && result.ok && !result.scoring &&
+        this.game.turn === this.aiColor) {
+      this.aiRequestId++;
+      this.thinking = false;
+      this.game.pass();
+      this.emit();
+      return;
+    }
+
     this.emit();
     if (result && result.scoring) return;
     this.maybeAI();
