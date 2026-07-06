@@ -155,6 +155,11 @@ html, body {
 .scoring-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .scoring-actions[hidden] { display: none; }
 .scoring-actions button { padding: 7px 8px; font-size: 12px; }
+.scoring-actions #btn-auto-dead { grid-column: 1 / -1; }
+.pass-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; padding: 10px; background: #1c2230; border-radius: 8px; }
+.pass-choice[hidden] { display: none; }
+.pass-choice p { grid-column: 1 / -1; margin: 0; color: #ffd479; font-weight: 600; }
+.pass-choice button { padding: 7px 8px; font-size: 12px; }
 
 /* 버튼 */
 button {
@@ -297,7 +302,13 @@ select {
             <span>백 따냄 <b id="cap-white">0</b></span>
           </div>
           <div id="result" class="result" hidden></div>
+          <div id="pass-choice" class="pass-choice" hidden>
+            <p>패스했습니다. 계가로 들어갈까요?</p>
+            <button id="btn-pass-score" class="primary">계가하기</button>
+            <button id="btn-pass-continue">계속두기</button>
+          </div>
           <div id="scoring-actions" class="scoring-actions" hidden>
+            <button id="btn-auto-dead">사석 자동 선택</button>
             <button id="btn-score-confirm" class="primary">계가 확정</button>
             <button id="btn-score-cancel">대국으로 돌아가기</button>
           </div>
@@ -610,6 +621,41 @@ class GoGame {
       else this.deadStones.add(key);
     }
     return { ok: true, selected: !remove };
+  }
+
+  autoSelectDeadStones() {
+    if (!this.result || this.result.type !== 'scoring') return { ok: false };
+    const selected = new Set();
+    const visited = new Set();
+
+    for (let y = 0; y < this.size; y++) for (let x = 0; x < this.size; x++) {
+      const startKey = y * this.size + x;
+      const color = this.board[y][x];
+      if (color === EMPTY || visited.has(startKey)) continue;
+
+      const group = this.groupInfo(x, y);
+      const liberties = new Set();
+      for (const [sx, sy] of group.stones) {
+        visited.add(sy * this.size + sx);
+        for (const [nx, ny] of this.neighbors(sx, sy)) {
+          if (this.board[ny][nx] === EMPTY) liberties.add(ny * this.size + nx);
+        }
+      }
+
+      const opponentColor = opponent(color);
+      const tightlySurrounded = liberties.size > 0 && liberties.size <= 2 &&
+        [...liberties].every(key => {
+          const lx = key % this.size, ly = Math.floor(key / this.size);
+          return this.neighbors(lx, ly).some(([nx, ny]) => this.board[ny][nx] === opponentColor);
+        });
+
+      if (tightlySurrounded) {
+        for (const [sx, sy] of group.stones) selected.add(sy * this.size + sx);
+      }
+    }
+
+    this.deadStones = selected;
+    return { ok: true, count: selected.size };
   }
 
   calculateScore(komi = 6.5) {
@@ -1295,6 +1341,7 @@ class GameController {
     this.humanColor = BLACK;
     this.aiColor = WHITE;
     this.thinking = false;
+    this.awaitingPassChoice = false;
     this.aiRequestId = 0;
     this.onChange = () => {};
 
@@ -1311,6 +1358,7 @@ class GameController {
     this.aiLevel = opts.aiLevel || 'medium';
     this.reviewMode = false;
     this.thinking = false;
+    this.awaitingPassChoice = false;
     this.aiRequestId++;
 
     this.game = new GoGame(19);
@@ -1326,7 +1374,7 @@ class GameController {
   }
 
   humanPlay(x, y) {
-    if (this.reviewMode || this.thinking) return;
+    if (this.reviewMode || this.thinking || this.awaitingPassChoice) return;
     if (this.game.result && this.game.result.type === 'scoring') {
       const result = this.game.toggleDeadGroup(x, y);
       if (result.ok) this.emit();
@@ -1342,15 +1390,16 @@ class GameController {
   }
 
   pass() {
-    if (this.reviewMode || this.thinking || this.game.ended) return;
+    if (this.reviewMode || this.thinking || this.awaitingPassChoice || this.game.ended) return;
     if (this.mode === 'ai' && this.game.turn !== this.humanColor) return;
     const result = this.game.pass();
 
+    // 사용자 선택 전까지 AI 착수와 계가 진입을 보류한다.
     if (this.mode === 'ai' && result && result.ok && !result.scoring &&
         this.game.turn === this.aiColor) {
       this.aiRequestId++;
       this.thinking = false;
-      this.game.pass();
+      this.awaitingPassChoice = true;
       this.emit();
       return;
     }
@@ -1360,8 +1409,29 @@ class GameController {
     this.maybeAI();
   }
 
+  confirmPassScoring() {
+    if (!this.awaitingPassChoice || this.mode !== 'ai' || this.game.ended ||
+        this.game.turn !== this.aiColor) return;
+    this.awaitingPassChoice = false;
+    this.aiRequestId++;
+    const result = this.game.pass();
+    this.thinking = false;
+    this.emit();
+    return result;
+  }
+
+  continueAfterPass() {
+    if (!this.awaitingPassChoice || this.mode !== 'ai' || this.game.ended ||
+        this.game.turn !== this.aiColor) return;
+    this.awaitingPassChoice = false;
+    this.emit();
+    this.maybeAI();
+    return { ok: true };
+  }
+
   resign() {
     if (this.reviewMode || this.game.ended) return;
+    this.awaitingPassChoice = false;
     // AI 대전이면 사람(흑)이 기권. 로컬이면 현재 차례가 기권.
     const loser = this.mode === 'ai' ? this.humanColor : this.game.turn;
     this.game.resign(loser);
@@ -1372,6 +1442,13 @@ class GameController {
     if (this.reviewMode) return;
     const result = this.game.confirmScore();
     if (result.ok) this.emit();
+  }
+
+  autoSelectDeadStones() {
+    if (this.reviewMode) return;
+    const result = this.game.autoSelectDeadStones();
+    if (result.ok) this.emit();
+    return result;
   }
 
   cancelScoring() {
@@ -1391,7 +1468,7 @@ class GameController {
   }
 
   maybeAI() {
-    if (this.mode !== 'ai' || this.game.ended) return;
+    if (this.mode !== 'ai' || this.game.ended || this.awaitingPassChoice) return;
     if (this.game.turn !== this.aiColor) return;
     const requestId = ++this.aiRequestId;
     const scheduledGame = this.game;
@@ -1422,6 +1499,7 @@ class GameController {
     this.reviewMode = true;
     this.mode = 'local';
     this.thinking = false;
+    this.awaitingPassChoice = false;
     this.reviewMoves = (kifu.moves || []).slice();
     this.reviewHandicap = kifu.handicap || 0;
     this.reviewSize = kifu.size || 19;
@@ -1474,6 +1552,7 @@ class GameController {
       result: g.result,
       passes: g.passes,
       thinking: this.thinking,
+      awaitingPassChoice: this.awaitingPassChoice,
       mode: this.mode,
       reviewMode: this.reviewMode,
       reviewIndex: this.reviewIndex,
@@ -1687,7 +1766,7 @@ function updateStatus(st) {
     if (st.result.type === 'resign') {
       msg = (st.result.winner === BLACK ? '흑' : '백') + ' 불계승 (상대 기권)';
     } else if (st.result.type === 'scoring') {
-      msg = '사석으로 볼 돌 그룹을 눌러 선택하거나 해제하세요.\n' + scoreSummary(st.score);
+      msg = '사석 자동 선택을 누른 뒤 돌 그룹을 눌러 수정하세요.\n' + scoreSummary(st.score);
     } else if (st.result.type === 'score') {
       msg = scoreSummary(st.score, true);
     }
@@ -1699,9 +1778,12 @@ function updateStatus(st) {
 
   // 진행 버튼 활성/비활성
   const inReview = st.reviewMode;
-  $('btn-pass').disabled = inReview || st.thinking || st.ended;
-  $('btn-undo').disabled = inReview || st.thinking || st.ended || st.moveNumber === 0;
+  $('btn-pass').disabled = inReview || st.thinking || st.awaitingPassChoice || st.ended;
+  $('btn-undo').disabled = inReview || st.thinking || st.awaitingPassChoice || st.ended || st.moveNumber === 0;
   $('btn-resign').disabled = inReview || st.ended;
+  const passChoice = $('pass-choice');
+  passChoice.hidden = !st.awaitingPassChoice;
+  passChoice.style.display = st.awaitingPassChoice ? 'grid' : 'none';
   const scoringActions = $('scoring-actions');
   scoringActions.hidden = !st.scoringMode;
   scoringActions.style.display = st.scoringMode ? 'grid' : 'none';
@@ -1738,6 +1820,8 @@ canvas.addEventListener('touchend', (e) => {
 
 // ----- 진행 버튼 -----
 $('btn-pass').addEventListener('click', () => ctrl.pass());
+$('btn-pass-score').addEventListener('click', () => ctrl.confirmPassScoring());
+$('btn-pass-continue').addEventListener('click', () => ctrl.continueAfterPass());
 $('btn-undo').addEventListener('click', () => ctrl.undo());
 $('btn-resign').addEventListener('click', () => {
   if (confirm('기권하시겠습니까?')) ctrl.resign();
@@ -1745,6 +1829,7 @@ $('btn-resign').addEventListener('click', () => {
 $('btn-score-confirm').addEventListener('click', () => {
   if (confirm('선택한 사석과 현재 점수로 계가를 확정할까요?')) ctrl.confirmScore();
 });
+$('btn-auto-dead').addEventListener('click', () => ctrl.autoSelectDeadStones());
 $('btn-score-cancel').addEventListener('click', () => ctrl.cancelScoring());
 
 // ----- 새 대국 -----
