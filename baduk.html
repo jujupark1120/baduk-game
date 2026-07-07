@@ -145,17 +145,25 @@ html, body {
 .status .meta b { color: var(--text); }
 .result {
   margin-top: 10px;
-  padding: 8px 10px;
+  padding: 14px;
   background: #1c2230;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  font-weight: 600;
-  color: #ffd479;
-  white-space: pre-line;
+  color: var(--text);
 }
-.scoring-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.score-guide { margin-bottom: 12px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.score-guide strong { display: block; margin-bottom: 3px; color: #ffd479; font-size: 15px; }
+.score-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.score-card { padding: 10px; border-radius: 8px; background: #252e3d; }
+.score-card strong { display: block; margin-bottom: 4px; font-size: 16px; }
+.score-card span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.score-outcome { margin-top: 10px; padding: 10px; border-radius: 8px; background: rgba(255, 212, 121, 0.12); color: #ffd479; font-size: 16px; font-weight: 800; text-align: center; }
+.score-neutral { margin-top: 8px; color: var(--muted); font-size: 12px; text-align: center; }
+.scoring-actions { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
 .scoring-actions[hidden] { display: none; }
-.scoring-actions button { padding: 7px 8px; font-size: 12px; }
-.scoring-actions #btn-auto-dead { grid-column: 1 / -1; }
+.scoring-actions button { padding: 9px 10px; font-size: 13px; }
+.scoring-actions #btn-score-confirm { padding: 12px; font-size: 15px; }
+.scoring-actions #btn-score-cancel { background: transparent; }
 .pass-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; padding: 10px; background: #1c2230; border-radius: 8px; }
 .pass-choice[hidden] { display: none; }
 .pass-choice p { grid-column: 1 / -1; margin: 0; color: #ffd479; font-weight: 600; }
@@ -308,8 +316,8 @@ select {
             <button id="btn-pass-continue">계속두기</button>
           </div>
           <div id="scoring-actions" class="scoring-actions" hidden>
-            <button id="btn-auto-dead">사석 자동 선택</button>
-            <button id="btn-score-confirm" class="primary">계가 확정</button>
+            <button id="btn-auto-dead">사석 후보 자동 선택</button>
+            <button id="btn-score-confirm" class="primary">이 점수로 계가 확정하기</button>
             <button id="btn-score-cancel">대국으로 돌아가기</button>
           </div>
         </div>
@@ -887,7 +895,7 @@ class BoardView {
       for (let x = 0; x < this.size; x++)
         if (game.board[y][x] !== EMPTY) {
           const dead = game.deadStones && game.deadStones.has(y * this.size + x);
-          this.drawStone(x, y, game.board[y][x], dead ? 0.35 : 1);
+          this.drawStone(x, y, game.board[y][x], dead ? 0.48 : 1);
           if (dead) this.drawDeadMark(x, y);
         }
 
@@ -929,13 +937,22 @@ class BoardView {
   drawDeadMark(x, y) {
     const ctx = this.ctx;
     const p = this.gridToPixel(x, y);
-    const r = this.cell * 0.24;
+    const ring = this.cell * 0.5;
+    const cross = this.cell * 0.27;
     ctx.save();
-    ctx.strokeStyle = '#e0586b';
-    ctx.lineWidth = Math.max(2, this.cell * 0.07);
+    ctx.fillStyle = 'rgba(224, 88, 107, 0.24)';
+    ctx.strokeStyle = '#ff5f76';
+    ctx.lineWidth = Math.max(3, this.cell * 0.1);
     ctx.beginPath();
-    ctx.moveTo(p.px - r, p.py - r); ctx.lineTo(p.px + r, p.py + r);
-    ctx.moveTo(p.px + r, p.py - r); ctx.lineTo(p.px - r, p.py + r);
+    ctx.arc(p.px, p.py, ring, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = '#fff2f4';
+    ctx.lineWidth = Math.max(3, this.cell * 0.11);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(p.px - cross, p.py - cross); ctx.lineTo(p.px + cross, p.py + cross);
+    ctx.moveTo(p.px + cross, p.py - cross); ctx.lineTo(p.px - cross, p.py + cross);
     ctx.stroke();
     ctx.restore();
   }
@@ -994,6 +1011,10 @@ function chooseMove(game, color, level) {
   const nonEye = moves.filter(m => !isOwnEye(game, m.x, m.y, color));
   const pool = nonEye.length ? nonEye : moves;
 
+  // 포석이나 일반 행마보다 즉시 포획과 단수 해소를 먼저 처리한다.
+  const tacticalMove = chooseUrgentTacticalMove(game, pool, color);
+  if (tacticalMove) return tacticalMove;
+
   // 합법수가 남아 있어도 대국이 끝난 상태라면 패스한다.
   // 사람의 패스에는 후반이면서 급한 수가 없을 때 맞패스하고,
   // 판이 많이 찬 뒤에도 의미 없는 끝내기만 남으면 먼저 패스한다.
@@ -1035,6 +1056,22 @@ function chooseMove(game, color, level) {
   return pick(best);
 }
 
+function chooseUrgentTacticalMove(game, moves, color) {
+  const captures = moves.filter(move => move.captured > 0);
+  if (captures.length) {
+    const maxCapture = Math.max(...captures.map(move => move.captured));
+    const bestCaptures = captures.filter(move => move.captured === maxCapture);
+    const safeCaptures = bestCaptures.filter(move => analyzeMoveSafety(game, move, color).immediateLoss === 0);
+    return pick(safeCaptures.length ? safeCaptures : bestCaptures);
+  }
+
+  const rescues = moves
+    .map(move => ({ move, saved: savedAtariStones(game, move, color) }))
+    .filter(item => item.saved > 0 && analyzeMoveSafety(game, item.move, color).immediateLoss === 0);
+  if (!rescues.length) return null;
+  const maxSaved = Math.max(...rescues.map(item => item.saved));
+  return pick(rescues.filter(item => item.saved === maxSaved).map(item => item.move));
+}
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 function shouldPass(game, moves, color) {
@@ -1175,36 +1212,35 @@ function scoreMove(game, m, color, level) {
   const opp = opponent(color);
 
   // 즉시 따냄과 단수에 몰린 내 돌 살리기를 가장 먼저 본다.
-  s += m.captured * 30;
-  s += savedAtariStones(game, m, color) * 22;
+  s += m.captured * 100;
+  s += savedAtariStones(game, m, color) * 70;
 
   // 착수 뒤 바로 잡힐 수 있는 수는 강하게 감점한다.
   const safety = analyzeMoveSafety(game, m, color);
   const myLib = safety.liberties;
-  if (myLib === 1 && m.captured === 0) s -= 18;
-  if (safety.immediateLoss > 0)
-    s -= safety.immediateLoss * (level === 'hard' ? 45 : 28);
-  s += Math.min(myLib, 4) * 0.5;
+  if (myLib <= 1 && m.captured === 0) s -= 100;
+  if (safety.immediateLoss > 0) s -= safety.immediateLoss * 100;
+  s += Math.min(myLib, 4);
 
   const groups = adjacentGroupStats(game, m, color);
   if (groups.ownGroups >= 2) s += (groups.ownGroups - 1) * 8; // 내 돌 연결
   if (groups.oppGroups >= 2) s += (groups.oppGroups - 1) * 7; // 상대 돌 사이 끊기
-  s += groups.oppNeighbors * 2.5;                              // 접촉·압박
+  s += groups.oppNeighbors * 10;                               // 상대 돌 근처의 의미 있는 응수
 
   // 내 돌로만 거의 둘러싸인 자리는 집이 아니더라도 대개 가치가 낮다.
-  if (groups.ownNeighbors >= 3 && groups.oppNeighbors === 0) s -= 12;
+  if (groups.ownNeighbors >= 3 && groups.oppNeighbors === 0) s -= 30;
 
   // 주변 분석
   for (const [nx, ny] of game.neighbors(m.x, m.y)) {
     const v = game.board[ny][nx];
     if (v === opp) {
       const gi = game.groupInfo(nx, ny);
-      if (gi.liberties === 1) s += 6;       // 상대를 단수/따냄 직전
-      else if (gi.liberties === 2) s += 5;  // 공격
+      if (gi.liberties === 1) s += 100;      // 즉시 포획 가능한 그룹
+      else if (gi.liberties === 2) s += 40; // 이 수로 상대를 단수로 만듦
       else if (gi.liberties === 3) s += 1.5;
     } else if (v === color) {
       const gi = game.groupInfo(nx, ny);
-      if (gi.liberties === 1) s += 5;        // 단수당한 내 그룹 잇기/살리기
+      if (gi.liberties === 1) s += 70;       // 단수당한 내 그룹 잇기/살리기
     }
   }
 
@@ -1232,7 +1268,6 @@ function scoreMove(game, m, color, level) {
   if (game.moveNumber >= 20 && nearby3 === 0) s -= level === 'hard' ? 12 : 7;
   if (nearby2 > 0) s += Math.min(nearby2, 4) * (level === 'hard' ? 1.4 : 0.9);
 
-  s += Math.random() * (level === 'hard' ? 0.25 : 1.2);
   return s;
 }
 
@@ -1732,10 +1767,16 @@ ctrl.onChange = (st) => { updateStatus(st); render(); };
 
 function scoreSummary(score, final = false) {
   const winner = score.winner === BLACK ? '흑' : '백';
-  const label = final ? '최종 결과' : '현재 예상';
-  return `흑 ${score.blackTotal}집 (영역 ${score.blackTerritory} + 잡은 돌 ${score.blackCaptures})\n` +
-    `백 ${score.whiteTotal}집 (영역 ${score.whiteTerritory} + 잡은 돌 ${score.whiteCaptures} + 덤 ${score.komi})\n` +
-    `중립 ${score.neutral}집 · ${label}: ${winner} ${score.margin}집 승`;
+  const outcome = final
+    ? `최종 승패 · ${winner} ${score.margin}집 승`
+    : `현재 예상 · ${winner} ${score.margin}집 우세`;
+  return `<div class="score-grid">` +
+    `<div class="score-card"><strong>흑 ${score.blackTotal}집</strong>` +
+    `<span>영역 ${score.blackTerritory}집<br>잡은 돌 ${score.blackCaptures}개</span></div>` +
+    `<div class="score-card"><strong>백 ${score.whiteTotal}집</strong>` +
+    `<span>영역 ${score.whiteTerritory}집<br>잡은 돌 ${score.whiteCaptures}개 · 덤 ${score.komi}집</span></div>` +
+    `</div><div class="score-neutral">중립 ${score.neutral}집</div>` +
+    `<div class="score-outcome">${outcome}</div>`;
 }
 
 function updateStatus(st) {
@@ -1764,13 +1805,16 @@ function updateStatus(st) {
   if (st.ended && st.result) {
     let msg = '';
     if (st.result.type === 'resign') {
-      msg = (st.result.winner === BLACK ? '흑' : '백') + ' 불계승 (상대 기권)';
+      const winner = st.result.winner === BLACK ? '흑' : '백';
+      msg = `<div class="score-outcome">최종 승패 · ${winner} 불계승</div>`;
     } else if (st.result.type === 'scoring') {
-      msg = '사석 자동 선택을 누른 뒤 돌 그룹을 눌러 수정하세요.\n' + scoreSummary(st.score);
+      msg = `<div class="score-guide"><strong>사석을 확인해 주세요</strong>` +
+        `먼저 ‘사석 후보 자동 선택’을 누른 뒤, 잘못 선택된 돌 그룹은 바둑판에서 직접 눌러 수정할 수 있습니다.</div>` +
+        scoreSummary(st.score);
     } else if (st.result.type === 'score') {
       msg = scoreSummary(st.score, true);
     }
-    resBox.textContent = msg;
+    resBox.innerHTML = msg;
     resBox.hidden = false;
   } else {
     resBox.hidden = true;
