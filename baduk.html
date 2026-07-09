@@ -1077,9 +1077,10 @@ function chooseMove(game, color, level) {
   const moves = game.legalMoves(color);
   if (moves.length === 0) return { pass: true };
 
-  // 자기 집(eye)을 메우는 수는 제외 (스스로 죽지 않게)
+  // 자기 집(eye)이나 이미 내 집처럼 굳은 작은 빈 곳은 더 강하게 제외한다.
   const nonEye = moves.filter(m => !isOwnEye(game, m.x, m.y, color));
-  const pool = nonEye.length ? nonEye : moves;
+  const nonTerritory = nonEye.filter(m => !isQuietOwnTerritoryMove(game, m, color));
+  const pool = nonTerritory.length ? nonTerritory : (nonEye.length ? nonEye : moves);
 
   // 포석보다 즉시 포획과 단수 해소를 먼저 처리한다.
   const tacticalMove = chooseUrgentTacticalMove(game, pool, color);
@@ -1102,7 +1103,7 @@ function chooseMove(game, color, level) {
       return pick(caps.filter(m => m.captured === maxCapture));
     }
     const rescues = pool.filter(m => savedAtariStones(game, m, color) > 0);
-    if (rescues.length && Math.random() < 0.65) return pick(rescues);
+    if (rescues.length && Math.random() < 0.82) return pick(rescues);
     const sensible = pool.filter(m => analyzeMoveSafety(game, m, color).immediateLoss === 0);
     const safePool = sensible.length ? sensible : pool;
     if (game.moveNumber < 24) {
@@ -1110,13 +1111,15 @@ function chooseMove(game, color, level) {
       if (openings.length && Math.random() < 0.75) return pick(openings);
     } else {
       const related = safePool.filter(m => isMeaningfulCandidate(game, m, color));
-      if (related.length && Math.random() < 0.7) return pick(related);
+      if (related.length && Math.random() < 0.88) return pick(related);
     }
-    return pick(safePool);
+    const active = safePool.filter(m => isMeaningfulCandidate(game, m, color));
+    return pick(active.length ? active : safePool);
   }
 
   // 상급은 국지전뿐 아니라 전판의 후보를 비교한 뒤 읽기 탐색에 넣는다.
-  const scoringPool = pool;
+  const meaningful = pool.filter(m => isMeaningfulCandidate(game, m, color));
+  const scoringPool = meaningful.length >= Math.min(10, pool.length) ? meaningful : pool;
 
   let best = [], bestScore = -Infinity;
   for (const m of scoringPool) {
@@ -1130,6 +1133,23 @@ function chooseMove(game, color, level) {
 }
 
 function chooseUrgentTacticalMove(game, moves, color) {
+  const rescues = moves
+    .map(move => ({
+      move,
+      saved: savedAtariStones(game, move, color),
+      defended: defendedWeakStones(game, move, color),
+      safety: analyzeMoveSafety(game, move, color),
+    }))
+    .filter(item => (item.saved > 0 || item.defended >= 2) && item.safety.immediateLoss === 0);
+  if (rescues.length) {
+    const bestSave = Math.max(...rescues.map(item => item.saved * 4 + item.defended));
+    const bestRescues = rescues.filter(item => item.saved * 4 + item.defended === bestSave);
+    const maxLiberties = Math.max(...bestRescues.map(item => item.safety.liberties));
+    return pick(bestRescues
+      .filter(item => item.safety.liberties === maxLiberties)
+      .map(item => item.move));
+  }
+
   const captures = moves.filter(move => move.captured > 0);
   if (captures.length) {
     const maxCapture = Math.max(...captures.map(move => move.captured));
@@ -1138,19 +1158,17 @@ function chooseUrgentTacticalMove(game, moves, color) {
     return pick(safeCaptures.length ? safeCaptures : bestCaptures);
   }
 
-  const rescues = moves
+  const ataris = moves
     .map(move => ({
       move,
-      saved: savedAtariStones(game, move, color),
+      pressured: atariStonesCreated(game, move, color) + pressureWeakEnemyStones(game, move, color),
       safety: analyzeMoveSafety(game, move, color),
     }))
-    .filter(item => item.saved > 0 && item.safety.immediateLoss === 0);
-  if (!rescues.length) return null;
-  const maxSaved = Math.max(...rescues.map(item => item.saved));
-  const largestRescues = rescues.filter(item => item.saved === maxSaved);
-  const maxLiberties = Math.max(...largestRescues.map(item => item.safety.liberties));
-  return pick(largestRescues
-    .filter(item => item.safety.liberties === maxLiberties)
+    .filter(item => item.pressured > 0 && item.safety.immediateLoss === 0);
+  if (!ataris.length) return null;
+  const maxPressure = Math.max(...ataris.map(item => item.pressured));
+  return pick(ataris
+    .filter(item => item.pressured === maxPressure)
     .map(item => item.move));
 }
 function getAIStrength(level) {
@@ -1321,6 +1339,35 @@ function savedAtariStones(game, move, color) {
   return saved;
 }
 
+// 활로가 2개뿐인 내 약한 돌을 잇거나 숨통을 넓히는 정도.
+function defendedWeakStones(game, move, color) {
+  const before = new Map();
+  for (const [nx, ny] of game.neighbors(move.x, move.y)) {
+    if (game.board[ny][nx] !== color) continue;
+    const group = game.groupInfo(nx, ny);
+    if (group.liberties > 2) continue;
+    before.set(groupKey(game, group), group);
+  }
+  if (!before.size) return 0;
+
+  const result = game.probe(move.x, move.y, color);
+  if (!result.legal) return 0;
+  const opp = opponent(color);
+  game.board[move.y][move.x] = color;
+  for (const [x, y] of result.captured) game.board[y][x] = EMPTY;
+
+  let defended = 0;
+  const after = game.groupInfo(move.x, move.y);
+  for (const group of before.values()) {
+    if (after.liberties > group.liberties)
+      defended += group.stones.length * (3 - group.liberties);
+  }
+
+  game.board[move.y][move.x] = EMPTY;
+  for (const [x, y] of result.captured) game.board[y][x] = opp;
+  return defended;
+}
+
 // 착수 직후 활로와 상대의 즉시 포획 가능성을 한 수만 시험한다.
 function analyzeMoveSafety(game, move, color) {
   const result = game.probe(move.x, move.y, color);
@@ -1419,6 +1466,32 @@ function atariStonesCreated(game, move, color) {
   return stones;
 }
 
+// 상대 약한 그룹에 붙거나 기대어 활로를 줄이는 압박 가치.
+function pressureWeakEnemyStones(game, move, color) {
+  const result = game.probe(move.x, move.y, color);
+  if (!result.legal) return 0;
+  const opp = opponent(color);
+  game.board[move.y][move.x] = color;
+  for (const [x, y] of result.captured) game.board[y][x] = EMPTY;
+
+  const counted = new Set();
+  let pressure = 0;
+  for (const [nx, ny] of game.neighbors(move.x, move.y)) {
+    if (game.board[ny][nx] !== opp) continue;
+    const group = game.groupInfo(nx, ny);
+    const key = groupKey(game, group);
+    if (counted.has(key)) continue;
+    counted.add(key);
+    if (group.liberties === 1) pressure += group.stones.length * 4;
+    else if (group.liberties === 2) pressure += group.stones.length * 2;
+    else if (group.liberties === 3) pressure += group.stones.length;
+  }
+
+  game.board[move.y][move.x] = EMPTY;
+  for (const [x, y] of result.captured) game.board[y][x] = opp;
+  return pressure;
+}
+
 function groupKey(game, group) {
   return group.stones
     .map(([x, y]) => y * game.size + x)
@@ -1456,6 +1529,8 @@ function isGoodOpeningPoint(game, move) {
 
 function isMeaningfulCandidate(game, move, color) {
   if (move.captured > 0 || savedAtariStones(game, move, color) > 0) return true;
+  if (defendedWeakStones(game, move, color) > 0) return true;
+  if (atariStonesCreated(game, move, color) > 0 || pressureWeakEnemyStones(game, move, color) > 0) return true;
   const groups = adjacentGroupStats(game, move, color);
   if (groups.oppNeighbors > 0 || groups.ownGroups >= 2 || groups.oppGroups >= 2) return true;
   if (game.lastMove) {
@@ -1473,8 +1548,13 @@ function scoreMove(game, m, color, level) {
   // 1단계 핵심: 즉시 포획과 단수 해소는 다른 일반 행마보다 확실히 우선한다.
   s += m.captured * 100;
   const rescued = savedAtariStones(game, m, color);
-  s += rescued * 85;
-  s += atariStonesCreated(game, m, color) * 22;
+  const defended = defendedWeakStones(game, m, color);
+  const atariCreated = atariStonesCreated(game, m, color);
+  const pressure = pressureWeakEnemyStones(game, m, color);
+  s += rescued * 120;
+  s += defended * 28;
+  s += atariCreated * 34;
+  s += pressure * 12;
 
   // 착수 직후 잡히는 수와 활로 하나뿐인 무리한 수는 후보에서 밀어낸다.
   const safety = analyzeMoveSafety(game, m, color);
@@ -1484,24 +1564,25 @@ function scoreMove(game, m, color, level) {
   s += Math.min(myLib, 4);
 
   const groups = adjacentGroupStats(game, m, color);
-  if (groups.ownGroups >= 2) s += (groups.ownGroups - 1) * 8; // 내 돌 연결
-  if (groups.oppGroups >= 2) s += (groups.oppGroups - 1) * 7; // 상대 돌 사이 끊기
-  s += groups.oppNeighbors * 10;                               // 상대 돌 근처의 의미 있는 응수
+  if (groups.ownGroups >= 2) s += (groups.ownGroups - 1) * 12; // 내 돌 연결
+  if (groups.oppGroups >= 2) s += (groups.oppGroups - 1) * 12; // 상대 돌 사이 끊기
+  s += groups.oppNeighbors * 16;                               // 상대 돌 근처의 의미 있는 응수
 
   // 내 돌로만 거의 둘러싸인 자리는 집이 아니더라도 대개 가치가 낮다.
-  if (groups.ownNeighbors >= 3 && groups.oppNeighbors === 0) s -= 30;
+  if (groups.ownNeighbors >= 3 && groups.oppNeighbors === 0 && rescued === 0 && defended === 0) s -= 48;
 
   // 주변 분석
   for (const [nx, ny] of game.neighbors(m.x, m.y)) {
     const v = game.board[ny][nx];
     if (v === opp) {
       const gi = game.groupInfo(nx, ny);
-      if (gi.liberties === 1) s += 100;      // 즉시 포획 가능한 그룹
-      else if (gi.liberties === 2) s += 12; // 실제 단수 보너스는 착수 후 별도로 계산
-      else if (gi.liberties === 3) s += 1.5;
+      if (gi.liberties === 1) s += 115;      // 즉시 포획 가능한 그룹
+      else if (gi.liberties === 2) s += 26; // 단수·압박으로 이어지는 접촉
+      else if (gi.liberties === 3) s += 8;
     } else if (v === color) {
       const gi = game.groupInfo(nx, ny);
-      if (gi.liberties === 1) s += 70;       // 단수당한 내 그룹 잇기/살리기
+      if (gi.liberties === 1) s += 110;      // 단수당한 내 그룹 잇기/살리기
+      else if (gi.liberties === 2) s += 24;
     }
   }
 
@@ -1527,15 +1608,18 @@ function scoreMove(game, m, color, level) {
 
   const nearby2 = nearbyStoneCount(game, m.x, m.y, 2);
   const nearby3 = nearbyStoneCount(game, m.x, m.y, 3);
-  if (game.moveNumber >= 20 && nearby3 === 0) s -= level === 'hard' ? 12 : 7;
+  if (game.moveNumber >= 20 && nearby3 === 0) s -= level === 'hard' ? 24 : 16;
+  if (game.moveNumber >= 32 && nearby2 === 0 && m.captured === 0 && rescued === 0 && atariCreated === 0)
+    s -= level === 'hard' ? 18 : 12;
   if (nearby2 > 0) s += Math.min(nearby2, 4) * (level === 'hard' ? 1.1 : 0.9);
 
   // 초중반에는 한쪽 과밀을 피하고 아직 비어 있는 전장으로 행마한다.
   const ownNearby = nearbyColorCount(game, m.x, m.y, 4, color);
   const oppNearby = nearbyColorCount(game, m.x, m.y, 4, opp);
-  if (isLikelyOwnTerritory(game, m.x, m.y, color)) s -= 90;
+  if (isLikelyOwnTerritory(game, m.x, m.y, color, 20)) s -= (rescued > 0 || defended > 0) ? 45 : 150;
+  if (isQuietOwnTerritoryMove(game, m, color)) s -= 90;
   if (ownNearby >= 6 && oppNearby === 0 && m.captured === 0 && rescued === 0)
-    s -= 18 + (ownNearby - 6) * 3;
+    s -= 32 + (ownNearby - 6) * 5;
   if (game.moveNumber < 55 && level === 'hard') {
     if (ownNearby === 0 && edge >= 2 && edge <= 5) s += 5;
     if (ownNearby >= 5) s -= (ownNearby - 4) * 2.4;
@@ -1543,6 +1627,14 @@ function scoreMove(game, m, color, level) {
   }
 
   return s;
+}
+
+function isQuietOwnTerritoryMove(game, move, color) {
+  if (move.captured > 0 || savedAtariStones(game, move, color) > 0) return false;
+  if (defendedWeakStones(game, move, color) > 0) return false;
+  const groups = adjacentGroupStats(game, move, color);
+  if (groups.oppNeighbors > 0 || pressureWeakEnemyStones(game, move, color) > 0) return false;
+  return isLikelyOwnTerritory(game, move.x, move.y, color, 20);
 }
 
 // (x,y)가 color의 "진짜 집(eye)"인지: 직교 이웃이 모두 내 색(또는 판 끝),
