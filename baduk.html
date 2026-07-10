@@ -1161,14 +1161,16 @@ function chooseUrgentTacticalMove(game, moves, color) {
   const ataris = moves
     .map(move => ({
       move,
-      pressured: atariStonesCreated(game, move, color) + pressureWeakEnemyStones(game, move, color),
+      atari: atariStonesCreated(game, move, color),
+      pressure: pressureWeakEnemyStones(game, move, color),
       safety: analyzeMoveSafety(game, move, color),
     }))
-    .filter(item => item.pressured > 0 && item.safety.immediateLoss === 0);
+    // 단순 접촉 압박은 점수 계산에 맡기고, 긴급 전술은 실제 단수나 큰 압박만 고른다.
+    .filter(item => (item.atari > 0 || item.pressure >= 4) && item.safety.immediateLoss === 0);
   if (!ataris.length) return null;
-  const maxPressure = Math.max(...ataris.map(item => item.pressured));
+  const maxPressure = Math.max(...ataris.map(item => item.atari * 4 + item.pressure));
   return pick(ataris
-    .filter(item => item.pressured === maxPressure)
+    .filter(item => item.atari * 4 + item.pressure === maxPressure)
     .map(item => item.move));
 }
 function getAIStrength(level) {
