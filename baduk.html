@@ -2083,6 +2083,52 @@ async function playerRpc(name, body) {
 let onlineRoom = null;
 let onlinePollTimer = null;
 let onlineRefreshing = false;
+const ONLINE_ROOM_STORE_KEY = 'baduk_online_rooms_v1';
+
+function onlineRoomOwner() {
+  return playerSession && playerSession.nickname ? playerSession.nickname.trim().toLowerCase() : '';
+}
+
+function loadStoredOnlineRooms() {
+  try {
+    const rooms = JSON.parse(localStorage.getItem(ONLINE_ROOM_STORE_KEY) || '{}');
+    return rooms && typeof rooms === 'object' && !Array.isArray(rooms) ? rooms : {};
+  } catch {
+    return {};
+  }
+}
+
+function getStoredOnlineRoom() {
+  const owner = onlineRoomOwner();
+  if (!owner) return null;
+  const room = loadStoredOnlineRooms()[owner];
+  if (!room || !room.gameId || !room.roomCode) return null;
+  return room;
+}
+
+function saveOnlineRoom() {
+  const owner = onlineRoomOwner();
+  if (!owner || !onlineRoom || !onlineRoom.gameId) return;
+  const rooms = loadStoredOnlineRooms();
+  rooms[owner] = {
+    gameId: onlineRoom.gameId,
+    roomCode: onlineRoom.roomCode,
+    myColor: onlineRoom.myColor,
+    status: onlineRoom.status,
+    version: onlineRoom.version,
+  };
+  localStorage.setItem(ONLINE_ROOM_STORE_KEY, JSON.stringify(rooms));
+}
+
+function removeStoredOnlineRoom() {
+  const owner = onlineRoomOwner();
+  if (!owner) return;
+  const rooms = loadStoredOnlineRooms();
+  if (!(owner in rooms)) return;
+  delete rooms[owner];
+  if (Object.keys(rooms).length) localStorage.setItem(ONLINE_ROOM_STORE_KEY, JSON.stringify(rooms));
+  else localStorage.removeItem(ONLINE_ROOM_STORE_KEY);
+}
 
 function requireOnlineLogin() {
   if (playerSession && playerSession.token) return true;
@@ -2123,11 +2169,12 @@ function applyOnlineSnapshot(snapshot) {
     status: snapshot.game.status,
     version: snapshot.game.version,
   };
+  saveOnlineRoom();
   showOnlineState();
 }
 
 async function refreshOnlineSnapshot(silent = false) {
-  if (!onlineRoom || !onlineRoom.gameId || !playerSession || onlineRefreshing) return;
+  if (!onlineRoom || !onlineRoom.gameId || !playerSession || onlineRefreshing) return false;
   onlineRefreshing = true;
   try {
     const snapshot = await playerRpc('get_game_snapshot', {
@@ -2136,8 +2183,10 @@ async function refreshOnlineSnapshot(silent = false) {
       p_after_move_no: 0,
     });
     applyOnlineSnapshot(snapshot);
+    return true;
   } catch (error) {
     if (!silent) showOnlineState(error.message);
+    return false;
   } finally {
     onlineRefreshing = false;
   }
@@ -2148,8 +2197,45 @@ function startOnlinePolling() {
   onlinePollTimer = setInterval(() => refreshOnlineSnapshot(true), 2000);
 }
 
+async function restoreOnlineRoom() {
+  if (!playerSession || onlineRoom) return false;
+  const stored = getStoredOnlineRoom();
+  if (!stored) return false;
+
+  onlineRoom = { ...stored };
+  $('sel-mode').value = 'online';
+  updateModeUI('online');
+  ctrl.newGame({ mode: 'online', handicap: 0 });
+  $('online-room-code').value = onlineRoom.roomCode;
+  showOnlineState('저장된 온라인 방을 확인하는 중…');
+
+  const restored = await refreshOnlineSnapshot(true);
+  if (!restored) {
+    removeStoredOnlineRoom();
+    stopOnlinePolling();
+    onlineRoom = null;
+    $('online-room-code').value = '';
+    showOnlineState('저장된 온라인 방을 복구하지 못해 연결 정보를 삭제했습니다.');
+    return false;
+  }
+
+  showOnlineState('온라인 방 상태를 복구했습니다.');
+  startOnlinePolling();
+  return true;
+}
+
 async function createOnlineGame() {
   if (!requireOnlineLogin()) return;
+  if (onlineRoom && onlineRoom.gameId) {
+    const proceed = confirm('이미 온라인 방에 연결되어 있습니다. 새 방을 만들면 기존 방 연결이 끊깁니다. 계속할까요?');
+    if (!proceed) {
+      showOnlineState('새 방 만들기를 취소하고 기존 방을 유지했습니다.');
+      return;
+    }
+    stopOnlinePolling();
+    removeStoredOnlineRoom();
+    onlineRoom = null;
+  }
   const button = $('btn-online-create');
   button.disabled = true;
   $('online-status').textContent = '방을 만드는 중…';
@@ -2167,6 +2253,7 @@ async function createOnlineGame() {
       status: result.status,
       version: result.version,
     };
+    saveOnlineRoom();
     $('online-room-code').value = result.room_code || '';
     showOnlineState('상대에게 방 코드를 알려주세요.');
     await refreshOnlineSnapshot(true);
@@ -2187,6 +2274,7 @@ async function joinOnlineGame() {
     return;
   }
   const button = $('btn-online-join');
+  const previousRoom = onlineRoom;
   button.disabled = true;
   $('online-status').textContent = '방에 참가하는 중…';
   try {
@@ -2202,11 +2290,12 @@ async function joinOnlineGame() {
       status: result.status,
       version: result.version,
     };
+    saveOnlineRoom();
     showOnlineState('방 참가가 완료되었습니다.');
     await refreshOnlineSnapshot(true);
     startOnlinePolling();
   } catch (error) {
-    onlineRoom = null;
+    onlineRoom = previousRoom;
     showOnlineState(error.message);
   } finally {
     button.disabled = false;
@@ -2249,8 +2338,13 @@ $('player-rank').addEventListener('change', async (event) => {
 $('btn-account').addEventListener('click', () => {
   if (!playerSession) { openAuth(); return; }
   if (confirm(`${playerSession.nickname} 아이디에서 로그아웃할까요?`)) {
+    stopOnlinePolling();
+    onlineRoom = null;
     localStorage.removeItem(PLAYER_SESSION_KEY);
     playerSession = null;
+    $('sel-mode').value = 'local';
+    updateModeUI('local');
+    ctrl.newGame({ mode: 'local', handicap: 0 });
     updateAccountButton();
     openAuth();
   }
@@ -2287,6 +2381,7 @@ $('auth-form').addEventListener('submit', async (event) => {
     $('auth-pin').value = '';
     updateAccountButton();
     closeAuth();
+    restoreOnlineRoom();
   } catch (error) {
     message.textContent = error.message;
   } finally {
@@ -2454,6 +2549,10 @@ $('sel-mode').addEventListener('change', (e) => {
       handicap: mode === 'online' ? 0 : (parseInt($('sel-handicap').value, 10) || 0),
     });
   }
+  if (mode === 'online' && onlineRoom && onlineRoom.gameId) {
+    refreshOnlineSnapshot(true);
+    startOnlinePolling();
+  }
 });
 $('btn-new').addEventListener('click', () => {
   ctrl.newGame({
@@ -2568,6 +2667,7 @@ function init() {
   renderSavedList();
   updateAccountButton();
   if (!playerSession) openAuth();
+  else restoreOnlineRoom();
 }
 window.addEventListener('resize', relayout);
 window.addEventListener('orientationchange', () => setTimeout(relayout, 200));
