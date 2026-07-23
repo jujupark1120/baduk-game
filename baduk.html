@@ -2083,6 +2083,7 @@ async function playerRpc(name, body) {
 let onlineRoom = null;
 let onlinePollTimer = null;
 let onlineRefreshing = false;
+let onlineActionPending = false;
 const ONLINE_ROOM_STORE_KEY = 'baduk_online_rooms_v1';
 
 function onlineRoomOwner() {
@@ -2116,6 +2117,10 @@ function saveOnlineRoom() {
     myColor: onlineRoom.myColor,
     status: onlineRoom.status,
     version: onlineRoom.version,
+    turnColor: onlineRoom.turnColor,
+    consecutivePasses: onlineRoom.consecutivePasses,
+    winnerColor: onlineRoom.winnerColor,
+    resultType: onlineRoom.resultType,
   };
   localStorage.setItem(ONLINE_ROOM_STORE_KEY, JSON.stringify(rooms));
 }
@@ -2153,10 +2158,28 @@ function showOnlineState(message = '') {
     return;
   }
   const status = onlineRoom.status === 'waiting' ? '상대 기다리는 중' :
-    onlineRoom.status === 'playing' ? '대국 준비 완료' : onlineRoom.status;
+    onlineRoom.status === 'playing' ? '대국 진행 중' :
+    onlineRoom.status === 'scoring' ? '계가 대기' :
+    onlineRoom.status === 'finished' ? '대국 종료' : onlineRoom.status;
+  const details = [];
+  if (onlineRoom.status === 'playing') details.push(`현재 차례: ${onlineColorName(onlineRoom.turnColor)}`);
+  if (onlineRoom.consecutivePasses != null) details.push(`연속 패스: ${onlineRoom.consecutivePasses}`);
+  if (onlineRoom.status === 'finished') {
+    details.push(`승자: ${onlineColorName(onlineRoom.winnerColor)}`);
+    details.push(`결과: ${onlineRoom.resultType || '-'}`);
+  }
+  const defaultMessage = onlineRoom.status === 'scoring'
+    ? '두 대국자가 연속 패스했습니다. 온라인 계가는 아직 구현되지 않았습니다.'
+    : onlineRoom.status === 'finished'
+      ? '온라인 대국이 종료되었습니다.'
+      : '온라인 착수는 아직 비활성화되어 있습니다.';
+  const displayMessage = onlineRoom.status === 'scoring' && message
+    ? `${message} 온라인 계가는 아직 구현되지 않았습니다.`
+    : message || defaultMessage;
   box.innerHTML = `<strong>방 코드 ${escapeHtml(onlineRoom.roomCode || '-')}</strong><br>` +
     `내 색: ${onlineColorName(onlineRoom.myColor)} · 상태: ${escapeHtml(status || '-')} · 버전: ${onlineRoom.version ?? '-'}<br>` +
-    `${message ? escapeHtml(message) : '현재 단계에서는 방 상태 확인만 가능하며 착수는 비활성화되어 있습니다.'}`;
+    `${details.length ? `${escapeHtml(details.join(' · '))}<br>` : ''}` +
+    `${escapeHtml(displayMessage)}`;
 }
 
 function applyOnlineSnapshot(snapshot) {
@@ -2168,21 +2191,31 @@ function applyOnlineSnapshot(snapshot) {
     myColor: snapshot.my_color,
     status: snapshot.game.status,
     version: snapshot.game.version,
+    turnColor: snapshot.game.turn_color,
+    moveNumber: snapshot.game.move_number,
+    consecutivePasses: snapshot.game.consecutive_passes,
+    winnerColor: snapshot.game.winner_color,
+    resultType: snapshot.game.result_type,
   };
   saveOnlineRoom();
   showOnlineState();
+  updateStatus(ctrl.state());
+}
+
+async function fetchOnlineSnapshot() {
+  const snapshot = await playerRpc('get_game_snapshot', {
+    p_token: playerSession.token,
+    p_game_id: onlineRoom.gameId,
+    p_after_move_no: 0,
+  });
+  applyOnlineSnapshot(snapshot);
 }
 
 async function refreshOnlineSnapshot(silent = false) {
   if (!onlineRoom || !onlineRoom.gameId || !playerSession || onlineRefreshing) return false;
   onlineRefreshing = true;
   try {
-    const snapshot = await playerRpc('get_game_snapshot', {
-      p_token: playerSession.token,
-      p_game_id: onlineRoom.gameId,
-      p_after_move_no: 0,
-    });
-    applyOnlineSnapshot(snapshot);
+    await fetchOnlineSnapshot();
     return true;
   } catch (error) {
     if (!silent) showOnlineState(error.message);
@@ -2190,6 +2223,49 @@ async function refreshOnlineSnapshot(silent = false) {
   } finally {
     onlineRefreshing = false;
   }
+}
+
+function isOnlineVersionConflict(error) {
+  const message = error && error.message ? error.message : '';
+  return message.includes('대국 상태가 변경') || message.includes('현재 버전') || message.includes('40001');
+}
+
+async function runOnlineAction(rpcName, successMessage) {
+  if (!onlineRoom || !onlineRoom.gameId || !playerSession || onlineActionPending) return false;
+  onlineActionPending = true;
+  updateStatus(ctrl.state());
+  try {
+    await playerRpc(rpcName, {
+      p_token: playerSession.token,
+      p_game_id: onlineRoom.gameId,
+      p_expected_version: onlineRoom.version,
+    });
+    await fetchOnlineSnapshot();
+    showOnlineState(successMessage);
+    return true;
+  } catch (error) {
+    try { await fetchOnlineSnapshot(); } catch {}
+    showOnlineState(isOnlineVersionConflict(error)
+      ? '다른 화면에서 대국 상태가 변경되어 최신 상태로 다시 맞췄습니다.'
+      : error.message);
+    return false;
+  } finally {
+    onlineActionPending = false;
+    updateStatus(ctrl.state());
+  }
+}
+
+async function passOnlineTurn() {
+  const canPass = onlineRoom && onlineRoom.status === 'playing' &&
+    onlineRoom.myColor === onlineRoom.turnColor;
+  if (!canPass) return;
+  await runOnlineAction('pass_turn', '패스가 처리되었습니다.');
+}
+
+async function resignOnlineGame() {
+  const canResign = onlineRoom && ['playing', 'scoring'].includes(onlineRoom.status);
+  if (!canResign || !confirm('온라인 대국에서 기권하시겠습니까?')) return;
+  await runOnlineAction('resign_game', '기권이 처리되었습니다.');
 }
 
 function startOnlinePolling() {
@@ -2412,10 +2488,20 @@ function scoreSummary(score, final = false) {
 function updateStatus(st) {
   const dot = $('turn-dot');
   const txt = $('turn-text');
-  dot.className = 'dot ' + (st.turn === BLACK ? 'black' : 'white');
+  const displayedTurn = st.mode === 'online' && onlineRoom && onlineRoom.turnColor
+    ? onlineRoom.turnColor : st.turn;
+  dot.className = 'dot ' + (displayedTurn === BLACK ? 'black' : 'white');
 
   if (st.mode === 'online') {
-    txt.textContent = '온라인 대전 · 방 연결 및 상태 확인 단계';
+    if (onlineRoom && onlineRoom.status === 'playing') {
+      txt.textContent = `${onlineColorName(onlineRoom.turnColor)} 차례 · 온라인 대전`;
+    } else if (onlineRoom && onlineRoom.status === 'scoring') {
+      txt.textContent = '온라인 계가 대기 · 계가 기능 미구현';
+    } else if (onlineRoom && onlineRoom.status === 'finished') {
+      txt.textContent = `대국 종료 · ${onlineColorName(onlineRoom.winnerColor)} 승`;
+    } else {
+      txt.textContent = '온라인 대전 · 상대 기다리는 중';
+    }
   } else if (st.thinking) {
     txt.textContent = 'AI가 다음 수를 생각하고 있습니다';
   } else if (st.scoringMode) {
@@ -2466,9 +2552,15 @@ function updateStatus(st) {
   // 진행 버튼 활성/비활성
   const inReview = st.reviewMode;
   const online = st.mode === 'online';
-  $('btn-pass').disabled = online || inReview || st.thinking || st.awaitingPassChoice || st.ended;
+  const canOnlinePass = online && onlineRoom && onlineRoom.status === 'playing' &&
+    onlineRoom.myColor === onlineRoom.turnColor && !onlineActionPending;
+  const canOnlineResign = online && onlineRoom &&
+    ['playing', 'scoring'].includes(onlineRoom.status) && !onlineActionPending;
+  $('btn-pass').disabled = online
+    ? !canOnlinePass
+    : inReview || st.thinking || st.awaitingPassChoice || st.ended;
   $('btn-undo').disabled = online || inReview || st.thinking || st.awaitingPassChoice || st.ended || st.moveNumber === 0;
-  $('btn-resign').disabled = online || inReview || st.ended;
+  $('btn-resign').disabled = online ? !canOnlineResign : inReview || st.ended;
   const passChoice = $('pass-choice');
   passChoice.hidden = !st.awaitingPassChoice;
   passChoice.style.display = st.awaitingPassChoice ? 'grid' : 'none';
@@ -2507,12 +2599,16 @@ canvas.addEventListener('touchend', (e) => {
 }, { passive: false });
 
 // ----- 진행 버튼 -----
-$('btn-pass').addEventListener('click', () => ctrl.pass());
+$('btn-pass').addEventListener('click', () => {
+  if (ctrl.mode === 'online') passOnlineTurn();
+  else ctrl.pass();
+});
 $('btn-pass-score').addEventListener('click', () => ctrl.confirmPassScoring());
 $('btn-pass-continue').addEventListener('click', () => ctrl.continueAfterPass());
 $('btn-undo').addEventListener('click', () => ctrl.undo());
 $('btn-resign').addEventListener('click', () => {
-  if (confirm('기권하시겠습니까?')) ctrl.resign();
+  if (ctrl.mode === 'online') resignOnlineGame();
+  else if (confirm('기권하시겠습니까?')) ctrl.resign();
 });
 $('btn-auto-dead').addEventListener('click', () => ctrl.autoSelectDeadStones());
 $('btn-score-confirm').addEventListener('click', () => {
